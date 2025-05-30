@@ -64,7 +64,7 @@ class Remixer(Thread):
         self.added =     time.time()
 
         #   Remixer variables
-        self.keys =      {0: "C", 1: "C#", 2: "D", 3: "Eb", 4: "E", 5:"F", 6:"F#", 7:"G", 8:"G#", 9:"A", 10:"Bb", 11:"B"}
+        self.keys =      {0: "C", 1: "C#", 2: "D", 3: "Eb", 4: "E", 5: "F", 6: "F#", 7: "G", 8: "G#", 9: "A", 10: "Bb", 11: "B"}
         self.infile  =   str(infile)
         if access('tmp/', W_OK):
             self.tempdir =   'tmp/'
@@ -171,7 +171,7 @@ class Remixer(Thread):
         """
             Set status flag to error, which stops the remixing, terminates the child process and returns.
         """
-        print("Trying to stop remixer %s" % self.uid)
+        print(("Trying to stop remixer %s" % self.uid))
         self.status = -1
 
     def attach(self, callback): 
@@ -351,11 +351,11 @@ class Remixer(Thread):
             rename("%s%s%03d.wav" % (self.tempdir, self.uid, 0), filename)
             return
         args = ['shntool', 'join', '-z', self.uid, '-q', '-d', self.tempdir]
-        for i in xrange(0, self.encoded):
+        for i in range(0, self.encoded):
             args.append("%s%s%03d.wav" % (self.tempdir, self.uid, i))
         call(args)
         rename("%sjoined%s.wav" % (self.tempdir, self.uid), filename)
-        for i in xrange(0, self.encoded):
+        for i in range(0, self.encoded):
             unlink("%s%s%03d.wav" % (self.tempdir, self.uid, i))
 
     """
@@ -496,9 +496,9 @@ class Remixer(Thread):
 
             outtag = File(self.outfile)  
             outtag.add_tags()
-            outtag.tags.add(id3.TBPM(encoding=0, text=unicode(self.template['tempo'])))
+            outtag.tags.add(id3.TBPM(encoding=0, text=str(self.template['tempo'])))
             if self.extension == ".mp3":
-                for k, v in self.mt.iteritems():
+                for k, v in self.mt.items():
                     if k != 'APIC:':
                         outtag.tags.add(v)
             elif self.extension == ".m4a":
@@ -508,7 +508,7 @@ class Remixer(Thread):
                     '\xa9nam': id3.TIT2,
                     '\xa9gen': id3.TCON                    
                 }
-                for k, v in self.mt.iteritems():
+                for k, v in self.mt.items():
                     if k in tags:
                         outtag.tags.add(tags[ k ](encoding=0, text=v[0]))
                 if 'trkn' in self.mt:
@@ -593,7 +593,7 @@ class CMDRemix():
         """
         if len(sys.argv) < 2:
             print("Error: no file specified!")
-            print("Usage: python -m remixers.%s <song.[mp3|m4a|wav|aif]>" % str(remixer.__name__.lower()))
+            print(("Usage: python -m remixers.%s <song.[mp3|m4a|wav|aif]>" % str(remixer.__name__.lower())))
         elif not path.exists(sys.argv[1]):
             print("Error: song does not exist!")
         else:
@@ -606,7 +606,7 @@ class CMDRemix():
         """
             Prints progress updates to the console.
         """
-        print("(%s%%) %s" % (round(s['progress']*100, 2), s['text']))
+        print(("(%s%%) %s" % (round(s['progress']*100, 2), s['text'])))
 
 if __name__ == "__main__":
     raise Exception("This class is a superclass of all remixers. Call the appropriate remixer instead.")

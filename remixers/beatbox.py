@@ -8,7 +8,7 @@ from remixer import * # Remixer class should now be Librosa-based
 import librosa
 import numpy as np
 import soundfile as sf
-import math
+# import math # Unused import
 # numpy (as np) is used, sf for soundfile
 
 def avg(xArr):

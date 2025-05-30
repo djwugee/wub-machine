@@ -31,11 +31,11 @@ class SoundCloud():
                 self.log.info("SoundCloud tracks received!")
             else:
                 self.log.error("SoundCloud fetch resulted in error: %s" % response.error)
-        except:
+        except Exception as e_fetch:
             self.log.error("SoundCloud track update failed completely with an exception:\n%s" % traceback.format_exc())
 
     def frontPageTrack(self):
-        if choice(xrange(0, 4)) % 4 and self.tracks:
+        if choice(range(0, 4)) % 4 and self.tracks:
             track = choice(self.tracks)
         else:
             track = self.supermassive

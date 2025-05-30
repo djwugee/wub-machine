@@ -1,4 +1,4 @@
-import os, mimetools, itertools, mimetypes
+import os, itertools, mimetypes, uuid # Replaced mimetools with uuid
 
 class Daemonize():
     # Default daemon parameters.
@@ -19,15 +19,15 @@ class Daemonize():
            REDIRECT_TO = "/dev/null"
         try:
             pid = os.fork()
-        except OSError, e:
-            raise Exception, "%s [%d]" % ( e.strerror, e.errno )
+        except OSError as e:
+            raise Exception("%s [%d]" % ( e.strerror, e.errno ))
 
         if (pid == 0):	# The first child.
             os.setsid()
             try:
                 pid = os.fork()	# Fork a second child.
-            except OSError, e:
-                raise Exception, "%s [%d]" % ( e.strerror, e.errno )
+            except OSError as e:
+                raise Exception("%s [%d]" % ( e.strerror, e.errno ))
 
             if (pid == 0):	# The second child.
                 os.chdir( self.WORKDIR )
@@ -42,7 +42,7 @@ class Daemonize():
             maxfd = self.MAXFD
 
         # Iterate through and close all file descriptors.
-        for fd in xrange( 0, maxfd ):
+        for fd in range( 0, maxfd ):
             try:
                 os.close(fd)
             except OSError:	# ERROR, fd wasn't open to begin with (ignored)
@@ -59,7 +59,7 @@ class MultiPartForm(object):
     def __init__(self):
         self.form_fields = []
         self.files = []
-        self.boundary = mimetools.choose_boundary()
+        self.boundary = uuid.uuid4().hex # Using uuid for boundary
         return
 
     def get_content_type(self):
@@ -83,38 +83,38 @@ class MultiPartForm(object):
         # Build a list of lists, each containing "lines" of the
         # request.  Each part is separated by a boundary string.
         # Once the list is built, return a string where each
-        # line is separated by '\r\n'.  
+        # line is separated by '\r\n'.
+        # Ensure all parts are strings before joining, especially if values/filenames can be non-string.
         parts = []
         part_boundary = '--' + self.boundary
 
         # Add the form fields
-        parts.extend(
-            [ part_boundary,
-              'Content-Disposition: form-data; name="%s"' % str( name ),
-              '',
-              str( value ),
-            ]
-            for name, value in self.form_fields
-            )
+        for name, value in self.form_fields:
+            parts.extend([
+                part_boundary,
+                'Content-Disposition: form-data; name="%s"' % str(name),
+                '',
+                str(value) # Value should be string or convertible to string
+            ])
 
         # Add the files to upload
-        parts.extend(
-            [ part_boundary,
-              'Content-Disposition: file; name="%s"; filename="%s"' % \
-                 ( str( field_name ), str( filename ) ),
-              'Content-Type: %s' % str( content_type ),
-              '',
-              str( body ),
-            ]
-            for field_name, filename, content_type, body in self.files
-            )
+        for field_name, filename, content_type, body in self.files:
+            parts.extend([
+                part_boundary,
+                'Content-Disposition: file; name="%s"; filename="%s"' % \
+                    (str(field_name), str(filename)), # Ensure filename is string
+                'Content-Type: %s' % str(content_type),
+                '',
+                body if isinstance(body, str) else body.decode('utf-8', 'replace') # Ensure body is string for join
+            ])
 
         # Flatten the list and add closing boundary marker,
         # then return CR+LF separated data
-        flattened = list(itertools.chain(*parts))
+        flattened = list(itertools.chain(*parts)) # This line was fine
         flattened.append('--' + self.boundary + '--')
         flattened.append('')
-        return '\r\n'.join(flattened)
+        return '\r\n'.join(map(str, flattened)) # Ensure all elements are strings before join
+
 
 def time_ago_in_words( time = None ):
     """
@@ -124,14 +124,21 @@ def time_ago_in_words( time = None ):
     """
     from datetime import datetime, timedelta
     now = datetime.now()
-    if type( time ) is int:
+    if isinstance( time, int ): # Changed from type() is int
         diff = now - datetime.fromtimestamp( time )
     elif isinstance( time, datetime ):
         diff = now - time 
-    elif isinstance( time, timedelta ):
-        diff = now - timedelta
+    elif isinstance( time, timedelta ): # This case seems problematic, subtracting timedelta from now.
+                                      # Original logic: diff = now - timedelta (if timedelta was an argument)
+                                      # If time is a timedelta, it should represent a past duration.
+                                      # Let's assume 'time' is a timestamp or datetime object for diff calculation.
+                                      # If 'time' IS a timedelta, it usually means "duration ago", so 'diff' is 'time'.
+        diff = time # If time is already a timedelta representing the difference
     elif not time:
         diff = now - now
+    else: # Fallback if time is not a recognized type, or handle error
+        return "unknown time" # Or raise an error
+
     second_diff = diff.seconds
     day_diff = diff.days
 
@@ -146,20 +153,20 @@ def time_ago_in_words( time = None ):
         if second_diff < 120:
             return  "a minute ago"
         if second_diff < 3600:
-            return str( second_diff / 60 ) + " minutes ago"
+            return str( second_diff // 60 ) + " minutes ago" # Floor division
         if second_diff < 7200:
             return "an hour ago"
         if second_diff < 86400:
-            return str( second_diff / 3600 ) + " hours ago"
+            return str( second_diff // 3600 ) + " hours ago" # Floor division
     if day_diff == 1:
         return "yesterday"
     if day_diff < 7:
         return str(day_diff) + " days ago"
     if day_diff < 31:
-        return str(day_diff/7) + " weeks ago"
+        return str(day_diff // 7) + " weeks ago" # Floor division
     if day_diff < 365:
-        return str(day_diff/30) + " months ago"
-    return str(day_diff/365) + " years ago"
+        return str(day_diff // 30) + " months ago" # Floor division
+    return str(day_diff // 365) + " years ago" # Floor division
 
 def time_in_words( time = None ):
     """
@@ -174,11 +181,11 @@ def time_in_words( time = None ):
     if time < 120:
         return  "a minute"
     if time < 3600:
-        return str( time / 60 ) + " minutes"
+        return str( time // 60 ) + " minutes" # Floor division
     if time < 7200:
         return "an hour"
     if time < 86400:
-        return str( time / 3600 ) + " hours"
+        return str( time // 3600 ) + " hours" # Floor division
 
 def seconds_to_time( time ):
     """
@@ -201,8 +208,8 @@ def seconds_to_time( time ):
     if second_diff < 0:
         second_diff = 0
 
-    if second_diff > 60:
-        return "%sm%ss" % ( str( second_diff / 60 ), ( second_diff % 60 ) )
+    if second_diff >= 60: # Corrected logic for minutes and seconds
+        return "%sm%ss" % ( str( second_diff // 60 ), ( second_diff % 60 ) ) # Floor division
     else:
         return "%ss" % second_diff
 
@@ -224,7 +231,8 @@ def convert_bytes(bytes):
         else:
             size = '%.2fb' % bytes
         return size
-    except:
+    except Exception as e_bytes: # Catch specific exception
+        # Consider logging e_bytes here if needed
         return "? Kb"
 
 def list_in_words( l ):

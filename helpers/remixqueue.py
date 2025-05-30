@@ -96,7 +96,7 @@ class RemixQueue():
                         pass
             db.commit()
             self.log.info("Track %s updated!" % uid)
-        except:
+        except Exception as e_update_track:
             self.log.error("DB error when updating %s, rolling back:\n%s" % (uid, traceback.format_exc()))
             db.rollback()
             

@@ -8,7 +8,7 @@ __author__ = "Peter Sobot"
 __copyright__ = "Copyright (C) 2011 Peter Sobot"
 __version__ = "2.2"
 
-import json, time, locale, traceback, gc, logging, os, database, urllib
+import json, time, locale, traceback, gc, logging, os, database, urllib.parse
 import tornado.ioloop, tornado.web, tornado.template, tornado.httpclient, tornado.escape, tornado.websocket
 import socketio
 import asyncio
@@ -58,7 +58,7 @@ class MainHandler(RequestHandler):
             "isOpen": r.isAccepting(),
             "track": sc.frontPageTrack(),
             "isErroring": r.errorRateExceeded(),
-            'count': locale.format("%d", trackCount, grouping=True),
+            'count': locale.format_string("%d", trackCount, grouping=True),
             'cleanup_timeout': time_in_words(config.cleanup_timeout),
             'javascript': js,
             'connectform': connectform
@@ -215,8 +215,8 @@ class MonitorHandler(RequestHandler):
                 elif a.action == 'remix' or a.action == 'share':
                     n["%s%s" % (a.action, a.success)] = int(a.__dict__['count(*)'])
             return n
-        except:
-            log.error("DB read exception:\n%s" % traceback.format_exc())
+        except Exception as e_hist:
+            log.error(f"DB read exception in histogram: {e_hist}\n{traceback.format_exc()}")
             return {}
 
     def remixqueue(self):
@@ -244,15 +244,16 @@ class MonitorHandler(RequestHandler):
         return templates.load('overview.html').generate(**kwargs)
 
     def current(self):
-        running = [v for k, v in r.remixers.iteritems() if k in r.running]
+        running = [v for k, v in r.remixers.items() if k in r.running]
         return templates.load('current.html').generate(c=running)
 
     def shared(self):
         db = database.Session()
         try:
             d = db.query(database.Event).filter_by(action = "sharing", success = True).group_by(database.Event.uid).order_by(database.Event.id.desc()).limit(6).all()
-        except:
-            log.error("DB read exception:\n%s" % traceback.format_exc())
+        except Exception as e_shared:
+            log.error(f"DB read exception in shared: {e_shared}\n{traceback.format_exc()}")
+            d = [] # Ensure d is defined
         return templates.load('shared.html').generate(tracks=d)
 
     @classmethod
@@ -265,8 +266,8 @@ class MonitorHandler(RequestHandler):
         if isinstance(track, database.Track):
             try:
                 track = db.merge(track)
-            except:
-                log.error("DB read exception:\n%s" % traceback.format_exc())
+            except Exception as e_merge:
+                log.error(f"DB merge exception in track: {e_merge}\n{traceback.format_exc()}")
                 db.rollback()
         else:
             if isinstance(track, dict) and 'uid' in track:
@@ -275,9 +276,10 @@ class MonitorHandler(RequestHandler):
                 return ''
             try:
                 tracks =  db.query(database.Track).filter(database.Track.uid == track).all()
-            except:
-                log.error("DB read exception:\n%s" % traceback.format_exc())
+            except Exception as e_query:
+                log.error(f"DB query exception in track: {e_query}\n{traceback.format_exc()}")
                 db.rollback()
+                tracks = [] # Ensure tracks is defined
             if not tracks:
                 return ''
             else:
@@ -322,9 +324,10 @@ class MonitorHandler(RequestHandler):
         db = database.Session()
         try:
             tracks = db.query(database.Track).order_by(database.Track.id.desc()).limit(config.monitor_limit).all()
-        except:
-            log.error("DB read exception, rolling back:\n%s" % traceback.format_exc())
+        except Exception as e_latest:
+            log.error(f"DB read exception in latest, rolling back: {e_latest}\n{traceback.format_exc()}")
             db.rollback()
+            tracks = [] # Ensure tracks is defined
         return ''.join([self.track(track) for track in tracks])
 
     def timespan(self):
@@ -339,15 +342,16 @@ class MonitorHandler(RequestHandler):
         db = database.Session()
         try:
             tracks = db.query(database.Track).filter(database.Track.time < datetime.fromtimestamp(end)).filter(database.Track.time > datetime.fromtimestamp(start)).order_by(database.Track.id.desc()).all()
-        except:
-            log.error("DB read exception, rolling back:\n%s" % traceback.format_exc())
+        except Exception as e_timespan:
+            log.error(f"DB read exception in timespan, rolling back: {e_timespan}\n{traceback.format_exc()}")
             db.rollback()
+            tracks = [] # Ensure tracks is defined
         return ''.join([self.track(track) for track in tracks])
 
     def graph(self):
         history = {}
         db = database.Session()
-        for i in xrange(1, 24*2): # last 3 days
+        for i in range(1, 24*2): # last 3 days
             low = datetime.now() - timedelta(hours = i)
             high = low + timedelta(hours = 1)
             timestamp = 1000 * time.mktime(high.timetuple())
@@ -367,10 +371,10 @@ class MonitorHandler(RequestHandler):
                         history[k].append(n[k])
                     else:
                         history[k].append([timestamp, int(0)])
-            except:
-                log.error("DB read exception, rolling back:\n%s" % traceback.format_exc())
+            except Exception as e_graph_inner:
+                log.error(f"DB read exception in graph inner loop, rolling back: {e_graph_inner}\n{traceback.format_exc()}")
                 db.rollback()
-        return history 
+        return history
 
 class ShareHandler(RequestHandler):
     @tornado.web.asynchronous
@@ -429,11 +433,12 @@ class ShareHandler(RequestHandler):
                 request_timeout = timeout,
                 connect_timeout = timeout
             )
-        except:
+        except Exception as e_share_get:
             self.write({ 'error': traceback.format_exc().splitlines()[-1] })
             self.event.success = False
             self.event.end = datetime.now()
             self.event.detail = traceback.format_exc()
+            log.error(f"Exception in ShareHandler.get for UID {self.uid}: {e_share_get}\n{self.event.detail}")
             # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
             if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
                 asyncio.create_task(self.emit_monitor_updates(self.uid))
@@ -444,23 +449,23 @@ class ShareHandler(RequestHandler):
             try:
                 db.add(self.event)
                 db.commit()
-            except:
-                log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
+            except Exception as e_db_share_event:
+                log.error(f"DB exception saving share event for UID {self.uid}, rolling back: {e_db_share_event}\n{traceback.format_exc()}")
                 db.rollback()
     
     def _get(self, response):
         self.write(response.body)
         self.finish()
-        r = json.loads(response.body)
+        r_data = json.loads(response.body) # Renamed to avoid conflict with global 'r'
         try:
             db = database.Session()
-            self.event = db.merge(self.event)
+            self.event = db.merge(self.event) # Ensure self.event was created in get()
             self.event.success = True
             self.event.end = datetime.now()
-            self.event.detail = r['permalink_url'].encode('ascii', 'ignore')
+            self.event.detail = r_data['permalink_url'].encode('ascii', 'ignore')
             db.commit()
-        except:
-            log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
+        except Exception as e_db_share_get:
+            log.error(f"DB exception after SoundCloud share for UID {self.uid}, rolling back: {e_db_share_get}\n{traceback.format_exc()}")
             db.rollback()
         # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
         if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
@@ -596,16 +601,18 @@ class UploadHandler(RequestHandler):
         self.uid = config.uid()
         try:
             remixer = remixers[self.get_argument('style')]
-        except:
-            log.error("Error when trying to handle upload: %s" % traceback.format_exc())
+        except Exception as e_style:
+            log.error(f"Error getting remixer style: {e_style}\n{traceback.format_exc()}")
             self.write({ "error" : "No remixer type specified!" })
+            return # Added return to stop processing
         
         self.track = database.Track(self.uid, style=self.get_argument('style'))
-        self.event = database.Event(self.uid, "upload", None, self.request.remote_ip, urllib.unquote_plus(self.get_argument('qqfile').encode('ascii', 'ignore')))
+        self.event = database.Event(self.uid, "upload", None, self.request.remote_ip, urllib.parse.unquote_plus(self.get_argument('qqfile').encode('ascii', 'ignore')))
 
         try:
             extension = os.path.splitext(self.get_argument('qqfile'))[1]
-        except:
+        except Exception as e_ext:
+            log.warning(f"Could not determine extension for {self.get_argument('qqfile')}, defaulting to .mp3: {e_ext}")
             extension = '.mp3'
         self.track.extension = extension
         targetPath = os.path.join('uploads/', '%s%s' % (self.uid, extension))
@@ -648,8 +655,8 @@ class UploadHandler(RequestHandler):
             db.add(self.track)
             db.add(self.event)
             db.commit()
-        except:
-            log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
+        except Exception as e_db_upload:
+            log.error(f"DB exception during upload for UID {self.uid}, rolling back: {e_db_upload}\n{traceback.format_exc()}")
             db.rollback()
 
         # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
@@ -705,8 +712,12 @@ async def main():
     log.info("Starting %s..." % config.app_name)
     try:
         locale.setlocale(locale.LC_ALL, 'en_US.utf8')
-    except:
-        locale.setlocale(locale.LC_ALL, 'en_US')
+    except locale.Error as e_locale: # More specific exception
+        log.warning(f"Could not set locale to en_US.utf8, trying en_US: {e_locale}")
+        try:
+            locale.setlocale(locale.LC_ALL, 'en_US')
+        except locale.Error as e_locale_us:
+            log.error(f"Could not set locale to en_US either: {e_locale_us}. Proceeding with default locale.")
     
     log.info("\tConnecting to MySQL...")
     db = database.Session()

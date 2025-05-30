@@ -25,7 +25,7 @@ class Cleanup():
                         self.log.info("\t\t\tRemoving %s..." % p)
                         try:
                             os.remove(p)
-                        except:
+                        except Exception as e_remove:
                             self.log.warning("Failed to remove %s:\n%s" % (p, traceback.format_exc()))
                             pass
         self.thumbnails()
@@ -56,5 +56,5 @@ class Cleanup():
                     p = os.path.join(self.artdir, f)
                     self.log.info("\t\tRemoving %s..." % p)
                     os.remove(p)
-        except:
-            self.log.error("DB read exception:\n%s" % traceback.format_exc())
+        except Exception as e_thumb:
+            self.log.error("DB read exception during thumbnail cleanup:\n%s" % traceback.format_exc())

@@ -111,7 +111,7 @@ class Dubstep(Remixer):
         found_samples = self.getSamples(section_bounds, key_to_try, target=self.template['target'])
 
         # Try fifths if no samples found
-        for _ in xrange(5): # Try up to 5 fifths
+        for _ in range(5): # Try up to 5 fifths
             if len(found_samples):
                 return found_samples
             key_to_try = (key_to_try + 7) % 12 # Move by a perfect fifth
@@ -120,7 +120,7 @@ class Dubstep(Remixer):
         # If still no samples, try moving to next sections and trying chromatic steps from the initial_key
         # This part of the original logic was:
         # else: # This 'else' corresponds to the 'for tries in xrange(0,5)' for fifths
-        #     for tries in xrange(0, 5):
+        #     for tries in range(0, 5):
         #         if len(a): break
         #         j = (j + 1) % len(self.sections)
         #         key = (key + 2) % 12 # This was odd, +2 is whole step, not chromatic or fifth
@@ -132,7 +132,7 @@ class Dubstep(Remixer):
                 current_section_idx = (section_idx + i) % len(self.sections) # Start with current, then wrap around
                 section_bounds = tuple(self.sections[current_section_idx])
                 key_to_try = initial_key # Reset to initial key for a new section
-                for _ in xrange(12): # Try all 12 chromatic keys
+                for _ in range(12): # Try all 12 chromatic keys
                     if len(found_samples):
                         return found_samples
                     found_samples = self.getSamples(section_bounds, key_to_try, target=self.template['target'])
@@ -148,55 +148,23 @@ class Dubstep(Remixer):
             target: "beats" or "bars"
             Returns a list of (start_time, end_time) tuples for matching segments.
         """
-        matching_segments = []
+        matching_segments_times = []
         section_start_time, section_end_time = section_time_bounds
 
-        elements_to_check = []
+        elements_to_use_pitch_data = []
         if target == "beats":
-            elements_to_check = self.beat_times
-        elif target == "bars": # self.bar_times is a list of (start, end) tuples
-            elements_to_check = [bar[0] for bar in self.bar_times] # Use start times for bars
+            elements_to_use_pitch_data = self.beat_pitch_data # List of (start_time, end_time, pitch_class)
+        elif target == "bars":
+            elements_to_use_pitch_data = self.bar_pitch_data # List of (start_time, end_time, pitch_class)
         
-        avg_element_duration = 0
-        if len(elements_to_check) > 1:
-            avg_element_duration = np.mean(np.diff(elements_to_check)) if target == "beats" else np.mean([b[1]-b[0] for b in self.bar_times])
-        elif len(elements_to_check) == 1 and target == "beats": # single beat
-             # Estimate duration based on tempo, assuming it's a beat
-             avg_element_duration = 60.0 / self.tempo if self.tempo > 0 else 0.5 
-        elif len(elements_to_check) == 1 and target == "bars": # single bar
-            avg_element_duration = self.bar_times[0][1] - self.bar_times[0][0]
-
-
-        for i, elem_start_time in enumerate(elements_to_check):
-            # Determine element_end_time
-            if target == "beats":
-                if i + 1 < len(elements_to_check):
-                    elem_end_time = elements_to_check[i+1]
-                else: # Last beat
-                    elem_end_time = elem_start_time + avg_element_duration
-            elif target == "bars":
-                elem_start_time, elem_end_time = self.bar_times[i] # self.bar_times already has (start, end)
-
-            # Check if element is within the given section_time_bounds
-            if elem_start_time >= section_start_time and elem_end_time <= section_end_time:
-                start_sample = librosa.time_to_samples(elem_start_time, sr=self.sr)
-                end_sample = librosa.time_to_samples(elem_end_time, sr=self.sr)
-                
-                # Ensure segment is not empty and has valid range
-                if end_sample > start_sample and end_sample <= self.y.shape[1]:
-                    segment_audio = self.y[..., start_sample:end_sample]
-                    segment_audio_mono = librosa.to_mono(segment_audio)
-
-                    if segment_audio_mono.size > 0:
-                        # Pitch analysis for this segment
-                        chromagram = librosa.feature.chroma_stft(y=segment_audio_mono, sr=self.sr)
-                        # Sum chroma energies for each pitch class over the segment's duration
-                        segment_chroma_energies = np.sum(chromagram, axis=1)
-                        dominant_pitch_class = np.argmax(segment_chroma_energies)
-                        
-                        if dominant_pitch_class == pitch_class:
-                            matching_segments.append((elem_start_time, elem_end_time))
-        return matching_segments
+        for elem_start_time, elem_end_time, elem_pitch_class in elements_to_use_pitch_data:
+            # Check if element is within the given section_time_bounds and matches pitch_class
+            if elem_start_time >= section_start_time and \
+               elem_end_time <= section_end_time and \
+               elem_pitch_class == pitch_class:
+                matching_segments_times.append((elem_start_time, elem_end_time))
+        
+        return matching_segments_times
 
     def mixfactor(self, segment_time_bounds):
         """
@@ -340,9 +308,9 @@ class Dubstep(Remixer):
             if song_duration_sec < total_16_beat_duration:
                 beat_duration_sec = song_duration_sec / 16.0
 
-            for i in xrange(4): # 4 bars
+            for i in range(4): # 4 bars
                 bar_segment_times = []
-                for j in xrange(4): # 4 beats per bar
+                for j in range(4): # 4 beats per bar
                     start = ((i * 4) + j) * beat_duration_sec
                     end = start + beat_duration_sec
                     bar_segment_times.append((start, end))
@@ -351,7 +319,7 @@ class Dubstep(Remixer):
             # We have enough beats from librosa.beat.beat_track
             # Group self.beat_times into bars. self.bar_times already does this.
             # Ensure we take the first 4 bars.
-            for i in xrange(min(4, len(self.bar_times))):
+            for i in range(min(4, len(self.bar_times))):
                 bar_start_time, bar_end_time = self.bar_times[i]
                 # Get beats within this bar
                 beats_in_bar_times = []
@@ -402,24 +370,24 @@ class Dubstep(Remixer):
 
         # Stutter patterns:
         # First beat of first bar x 4 (quarter notes implies full duration of original beat)
-        for _ in xrange(4): source_audio_segments_times.append(first_beat_first_bar)
+        for _ in range(4): source_audio_segments_times.append(first_beat_first_bar)
         # First beat of second bar x 4
-        for _ in xrange(4): source_audio_segments_times.append(first_beat_second_bar)
+        for _ in range(4): source_audio_segments_times.append(first_beat_second_bar)
         
         # First beat of third bar x 8 (eighth notes - half duration)
         s, e = first_beat_third_bar
         dur = (e - s) / 2.0
-        for _ in xrange(8): source_audio_segments_times.append((s, s + dur)) # Take first half
+        for _ in range(8): source_audio_segments_times.append((s, s + dur)) # Take first half
         
         # First beat of fourth bar x 8 (sixteenth notes - quarter duration)
         s, e = first_beat_fourth_bar
         dur = (e - s) / 4.0
-        for _ in xrange(8): source_audio_segments_times.append((s, s + dur))
+        for _ in range(8): source_audio_segments_times.append((s, s + dur))
         
         # Third beat of fourth bar x 8 (sixteenth notes - quarter duration)
         s, e = third_beat_fourth_bar
         dur = (e - s) / 4.0
-        for _ in xrange(8): source_audio_segments_times.append((s, s + dur))
+        for _ in range(8): source_audio_segments_times.append((s, s + dur))
         
         # Concatenate pieces from original song based on source_audio_segments_times
         concatenated_song_pieces = self._get_audio_pieces(self.y, self.sr, source_audio_segments_times)
@@ -515,10 +483,10 @@ class Dubstep(Remixer):
         elif self.template['target'] == "bars": f, r = 1, 1
         else: f, r = 2, 2 # Default to "beats" like behavior
 
-        for _ in xrange(r): # Repeat the 8-unit pattern r times
-            for i in xrange(0, 4 * f): onebar_source_segments_times.append(s1_times[i % len(s1_times)])
-            for i in xrange(4 * f, 6 * f): onebar_source_segments_times.append(s2_times[i % len(s2_times)])
-            for i in xrange(6 * f, 8 * f): onebar_source_segments_times.append(s3_times[i % len(s3_times)])
+        for _ in range(r): # Repeat the 8-unit pattern r times
+            for i in range(0, 4 * f): onebar_source_segments_times.append(s1_times[i % len(s1_times)])
+            for i in range(4 * f, 6 * f): onebar_source_segments_times.append(s2_times[i % len(s2_times)])
+            for i in range(6 * f, 8 * f): onebar_source_segments_times.append(s3_times[i % len(s3_times)])
         
         concatenated_song_pieces = self._get_audio_pieces(self.y, self.sr, onebar_source_segments_times)
 
@@ -603,45 +571,64 @@ class Dubstep(Remixer):
         y_mono = librosa.to_mono(self.y) # For analysis features that prefer mono
         
         # Tempo and Beats
-        # self.tempo is BPM, self.beat_times is a list of seconds for beat occurrences
         estimated_tempo, self.beat_frames = librosa.beat.beat_track(y=y_mono, sr=self.sr)
-        self.tempo = estimated_tempo # Store the detected tempo
+        self.tempo = estimated_tempo 
         self.beat_times = librosa.frames_to_time(self.beat_frames, sr=self.sr)
         
-        # Sections: list of (start_time, end_time) tuples
-        section_sample_boundaries = librosa.effects.split(y_mono, top_db=30) # Returns (N, 2) array of start/end samples
-        self.sections = [] # Ensure it's a list of simple tuples
+        # Sections
+        section_sample_boundaries = librosa.effects.split(y_mono, top_db=30)
+        self.sections = [] 
         for i in range(section_sample_boundaries.shape[0]):
             start_t = librosa.samples_to_time(section_sample_boundaries[i,0], sr=self.sr)
             end_t = librosa.samples_to_time(section_sample_boundaries[i,1], sr=self.sr)
             self.sections.append( (start_t, end_t) )
 
-        # Bars: list of (start_time, end_time) tuples
-        # Simplified: group beats into bars based on detected tempo and 4/4 assumption
+        # Bars
         self.bar_times = []
         if len(self.beat_times) > 0:
-            beats_per_bar = 4 # Assuming 4/4
-            beat_duration_approx = 60.0 / self.tempo if self.tempo > 0 else 0.5 # Approx beat duration
+            beats_per_bar = 4 
+            beat_duration_approx = 60.0 / self.tempo if self.tempo > 0 else 0.5
             for i in range(0, len(self.beat_times), beats_per_bar):
                 bar_start_time = self.beat_times[i]
-                # Determine end_time for the bar
                 if i + beats_per_bar < len(self.beat_times):
                     bar_end_time = self.beat_times[i + beats_per_bar]
-                else: # Last bar
-                    bar_end_time = self.beat_times[-1] + beat_duration_approx 
-                    # Cap at song duration
+                else:
+                    bar_end_time = self.beat_times[-1] + beat_duration_approx
                     song_total_duration = librosa.get_duration(y=self.y, sr=self.sr)
-                    if bar_end_time > song_total_duration:
-                        bar_end_time = song_total_duration
+                    if bar_end_time > song_total_duration: bar_end_time = song_total_duration
                 self.bar_times.append((bar_start_time, bar_end_time))
 
-        # Tonic (Key)
-        chromagram = librosa.feature.chroma_stft(y=y_mono, sr=self.sr)
+        # Pre-calculate pitch classes for all beats and bars
+        self.beat_pitch_data = []
+        avg_beat_dur = 60.0 / self.tempo if self.tempo > 0 else 0.5
+        for i, start_t in enumerate(self.beat_times):
+            end_t = self.beat_times[i+1] if i+1 < len(self.beat_times) else start_t + avg_beat_dur
+            start_sample = librosa.time_to_samples(start_t, sr=self.sr)
+            end_sample = librosa.time_to_samples(end_t, sr=self.sr)
+            if start_sample < end_sample and end_sample <= self.y.shape[1]: # Ensure valid slice
+                segment_y_mono = librosa.to_mono(self.y[..., start_sample:end_sample])
+                if segment_y_mono.size > 0:
+                    chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr)
+                    dom_pitch = np.argmax(np.sum(chroma, axis=1))
+                    self.beat_pitch_data.append((start_t, end_t, dom_pitch))
+        
+        self.bar_pitch_data = []
+        for start_t, end_t in self.bar_times:
+            start_sample = librosa.time_to_samples(start_t, sr=self.sr)
+            end_sample = librosa.time_to_samples(end_t, sr=self.sr)
+            if start_sample < end_sample and end_sample <= self.y.shape[1]: # Ensure valid slice
+                segment_y_mono = librosa.to_mono(self.y[..., start_sample:end_sample])
+                if segment_y_mono.size > 0:
+                    chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr)
+                    dom_pitch = np.argmax(np.sum(chroma, axis=1))
+                    self.bar_pitch_data.append((start_t, end_t, dom_pitch))
+
+        # Tonic (Key) - Overall key for the track
+        chromagram = librosa.feature.chroma_stft(y=y_mono, sr=self.sr) # Use full mono track for overall key
         chroma_energies = np.sum(chromagram, axis=1)
-        self.tonic = np.argmax(chroma_energies) # Index 0-11 (C to B)
+        self.tonic = np.argmax(chroma_energies)
 
         self.tag['key'] = self.keys[self.tonic] if self.tonic >= 0 and self.tonic < 12 else '?'
-        # The dubstep output tempo is fixed by the template, not the original song's tempo
         self.tag['tempo'] = self.template['tempo'] 
 
         # Compile Intro
