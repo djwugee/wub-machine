@@ -17,9 +17,9 @@ from traceback import print_exception, format_exc
 from subprocess import check_call, call
 from mutagen import File, id3
 from PIL import Image
-from echonest.selection import *
-from echonest.sorting import *
-import echonest.audio as audio
+import librosa
+import numpy as np
+import soundfile as sf
 import time, sys, wave, mimetypes, config, logging, traceback
 
 class Remixer(Thread):
@@ -134,7 +134,7 @@ class Remixer(Thread):
     def handleError(self, e):
         self.step = "Hmm... something went wrong. Please try again later!"
         progress = self.logbase()
-        progress['debug'] = unicode(e)
+        progress['debug'] = str(e) # Python 3: unicode() is str()
         self.last = progress
 
     def error(self, text):
@@ -171,7 +171,7 @@ class Remixer(Thread):
         """
             Set status flag to error, which stops the remixing, terminates the child process and returns.
         """
-        print "Trying to stop remixer %s" % self.uid
+        print("Trying to stop remixer %s" % self.uid)
         self.status = -1
 
     def attach(self, callback): 
@@ -225,18 +225,21 @@ class Remixer(Thread):
         self.last = None
         try:
             progress = self.processqueue.get(True, self.timeout)          #   Queue that blocks until progress updates happen
-            while progress and self.status is not -1:                       #   MUST END WITH False value, or else this will block forever
+            while progress and self.status != -1:                       #   MUST END WITH False value, or else this will block forever
                 self.last = progress
                 for callback in self.callbacks:                             #   Send all progress updates
                     callback(progress)
                 progress = self.processqueue.get(True, self.timeout)      #   Grab another progress update from the process
-        except Exception, e:
+        except Exception as e: # Python 3 syntax
             self.status = -1
             self.handleError(e)
-        else:
-            if self.status is -1:
+        else: # Python 3 'else' for try/except/else
+            if self.status == -1:
                 try:
-                  self.handleError(Exception("RemixTermination. Last was:\n%s" % last))
+                  # Ensure 'last' is defined in this scope if used. It's defined in the try block.
+                  # If the loop doesn't run, 'last' might not be defined.
+                  # It's safer to use self.last which is updated in the loop.
+                  self.handleError(Exception("RemixTermination. Last was:\n%s" % self.last))
                 except:
                     self.handleError(Exception("RemixTermination"))
         self.processqueue.close()
@@ -274,48 +277,67 @@ class Remixer(Thread):
         r = check_call(['lame', '-S', '--preset', 'fast', 'medium', str(infile), str(outfile)])
         return r
 
-    def mono_to_stereo(self, audio_data):
+    def mono_to_stereo(self, y_mono):
         """
-            Take in an AudioData with two channels,
-            return one with one. This here's a theivin' method.
+            Converts a mono NumPy array to a stereo NumPy array.
         """
-        data = audio_data.data.flatten().tolist()
-        new_data = array((data,data))
-        audio_data.data = new_data.swapaxes(0,1)
-        audio_data.numChannels = 2
-        return audio_data
+        if y_mono.ndim == 1:
+            return np.vstack([y_mono, y_mono])
+        elif y_mono.ndim == 2 and y_mono.shape[0] == 1: # Check if it's (1, N)
+            return np.vstack([y_mono[0], y_mono[0]])
+        # If already stereo or other format, return as is, or raise error
+        return y_mono
 
-    def truncatemix(self, dataA, dataB, mix=0.5):
+    def truncatemix(self, y_a, y_b, mix=0.5):
         """
-        Mixes two "AudioData" objects. Assumes they have the same sample rate
+        Mixes two NumPy arrays representing audio data. Assumes they have the same sample rate
         and number of channels.
-        
+
         Mix takes a float 0-1 and determines the relative mix of two audios.
-        i.e., mix=0.9 yields greater presence of dataA in the final mix.
+        i.e., mix=0.9 yields greater presence of y_a in the final mix.
 
-        If dataB is longer than dataA, dataB is truncated to dataA's length.
+        If y_b is longer than y_a, y_b is truncated to y_a's length.
         """
-        newdata = audio.AudioData(ndarray=dataA.data, sampleRate=dataA.sampleRate,
-            numChannels=dataA.numChannels, defer=False, verbose=False)
-        newdata.data *= float(mix)
-        if dataB.endindex > dataA.endindex:
-            newdata.data[:] += dataB.data[:dataA.endindex] * (1 - float(mix))
+        # Ensure y_a is float for multiplication
+        y_a_float = y_a.astype(np.float32)
+        
+        # Create a copy for the new data to avoid modifying original y_a
+        mixed_y = y_a_float * float(mix)
+        
+        len_a = y_a.shape[1]
+        len_b = y_b.shape[1]
+
+        # Determine the length of the mix
+        mix_len = min(len_a, len_b)
+
+        # Add the second audio stream
+        if len_b > len_a: # y_b is longer, truncate y_b
+            mixed_y[:, :len_a] += y_b[:, :len_a].astype(np.float32) * (1.0 - float(mix))
+        else: # y_a is longer or equal length, truncate y_b (or use full if equal)
+            mixed_y[:, :len_b] += y_b[:, :len_b].astype(np.float32) * (1.0 - float(mix))
+            # If y_a was longer, the end part of mixed_y (from y_a) is already there.
+            # If y_b was longer, it's truncated.
+            # If they were equal, it's a full mix.
+            # If y_a is longer than y_b, we need to ensure the remaining part of y_a is correctly scaled or handled.
+            # The current logic: mixed_y starts as scaled y_a. We add scaled y_b.
+            # If y_a is longer, mixed_y already contains the tail of y_a * mix. This is correct.
+
+        return mixed_y
+
+    def partialEncode(self, y, sr):
+        """
+            Encodes a NumPy array to a WAV file.
+            Each call creates a new numbered WAV file. These are later concatenated by mixwav.
+        """
+        filename = "%s%s%03d.wav" % (self.tempdir, self.uid, self.encoded)
+        # Soundfile expects data in (samples, channels) or (samples,) for mono
+        # Librosa usually gives (channels, samples) or (samples,) for mono
+        # If y is (channels, samples), transpose it. If mono (N,), it's fine.
+        if y.ndim == 2 and y.shape[0] < y.shape[1]: # Assuming channels are the smaller dimension
+            y_to_write = y.T 
         else:
-            newdata.data[:dataB.endindex] += dataB.data[:] * (1 - float(mix))
-        return newdata
-
-    def partialEncode(self, audiodata):
-        """
-            A neat alternative to AudioQuantumList.
-            Instead of making a list, holding it in memory and encoding it all at once,
-            each element in the list is encoded upon addition.
-
-            After many partialEncode()s, the mixwav() function should be called,
-            which calls shntool on the command line for super-fast audio concatenation.
-        """
-        audiodata.encode("%s%s%03d.wav" % (self.tempdir, self.uid, self.encoded))
-        audiodata.verbose = False
-        audiodata.unload()
+            y_to_write = y
+        sf.write(filename, y_to_write, sr)
         self.encoded += 1
 
     def mixwav(self, filename):
@@ -325,7 +347,7 @@ class Remixer(Thread):
             
             Requires the shntool binary to be installed.
         """
-        if self.encoded is 1:
+        if self.encoded == 1:
             rename("%s%s%03d.wav" % (self.tempdir, self.uid, 0), filename)
             return
         args = ['shntool', 'join', '-z', self.uid, '-q', '-d', self.tempdir]
@@ -381,16 +403,18 @@ class Remixer(Thread):
         except:
             return False
 
-    def detectSong(self, analysis):
+    def detectSong(self, analysis_unused): # Parameter kept for compatibility if subclasses call it
         """
-            Uses an EchoNest analysis to try to detect the name and tag info of a song.
+            Placeholder for song detection. Original Echonest functionality removed.
+            Metadata detection primarily relies on mutagen in getTag.
         """
-        try:
-            for k in ['title', 'artist', 'album']:
-                if k in self.original.analysis.metadata and not k in self.tag:
-                    self.tag[k] = self.original.analysis.metadata[k]
-        except:
-           pass
+        # The original implementation relied on self.original.analysis.metadata
+        # which is no longer available with Librosa.
+        # Subclasses might have their own ways to use the 'analysis' (now 'analysis_unused')
+        # if they perform their own analysis and want to update tags.
+        # For the base Remixer class, this function no longer has a specific role
+        # in populating tags from Echonest.
+        pass
 
 
     def processArt(self):
@@ -512,16 +536,42 @@ class Remixer(Thread):
         except:
             pass
 
-    def loudness(self, segments, bar):
+    def loudness(self, y, sr, segments_time, target_indices):
         """
-            Given a list of segments (a.k.a: song.analysis.segments) and a bar,
-            calculate the average loudness of the bar.
+            Calculates the average RMS energy for specified segments.
+            'y' is the audio waveform (NumPy array).
+            'sr' is the sample rate.
+            'segments_time' is a list of (start_time, end_time) tuples for audio segments.
+            'target_indices' is a list of indices into 'segments_time' to calculate loudness for.
+
+            This is a placeholder replacement for the Echonest-based loudness.
+            Actual usage will depend on how segments/bars are defined by subclasses using Librosa.
         """
-        b = segments.that(overlap_range(bar[0].start, bar[len(bar)-1].end))
-        maximums = [x.loudness_max for x in b]
-        if len(maximums):   
-            return float(sum(maximums) / len(maximums))
+        if y is None or sr is None:
+            logging.warning("Loudness calculation skipped: audio data not available.")
+            return None
+
+        all_rms = []
+        for i in target_indices:
+            if i < 0 or i >= len(segments_time):
+                logging.warning("Loudness calculation: invalid segment index %d" % i)
+                continue
+            
+            start_time, end_time = segments_time[i]
+            start_sample = librosa.time_to_samples(start_time, sr=sr)
+            end_sample = librosa.time_to_samples(end_time, sr=sr)
+            
+            if end_sample > start_sample:
+                segment_audio = y[..., start_sample:end_sample]
+                if segment_audio.size > 0:
+                    rms = librosa.feature.rms(y=segment_audio)
+                    if rms.size > 0:
+                        all_rms.append(np.mean(rms))
+
+        if len(all_rms) > 0:
+            return float(np.mean(all_rms))
         else:
+            logging.warning("Loudness calculation: No valid RMS values found for the given segments.")
             return None
 
 
@@ -542,10 +592,10 @@ class CMDRemix():
             Handles command line argument parsing and sets up a new remixer.
         """
         if len(sys.argv) < 2:
-            print "Error: no file specified!"
-            print "Usage: python -m remixers.%s <song.[mp3|m4a|wav|aif]>" % str(remixer.__name__.lower())
+            print("Error: no file specified!")
+            print("Usage: python -m remixers.%s <song.[mp3|m4a|wav|aif]>" % str(remixer.__name__.lower()))
         elif not path.exists(sys.argv[1]):
-            print "Error: song does not exist!"
+            print("Error: song does not exist!")
         else:
             r = remixer(self, sys.argv[1], callbacks=self.log)
             r.deleteOriginal = False
@@ -556,7 +606,7 @@ class CMDRemix():
         """
             Prints progress updates to the console.
         """
-        print "(%s%%) %s" % (round(s['progress']*100, 2), s['text']) 
+        print("(%s%%) %s" % (round(s['progress']*100, 2), s['text']))
 
 if __name__ == "__main__":
     raise Exception("This class is a superclass of all remixers. Call the appropriate remixer instead.")

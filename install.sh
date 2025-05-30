@@ -65,19 +65,15 @@ if [[ $platform == 'linux' ]]; then
     pip install pyyaml
     pip install numpy
     pip install mutagen
+    pip install librosa
+    pip install soundfile
 
     apt-get install libjpeg-dev
     pip install PIL
 
-    # The Echo Nest Remix API
+    # FFMpeg is a dependency for Librosa and general audio processing
     apt-get install ffmpeg
-    sudo ln -s `which ffmpeg` /usr/local/bin/en-ffmpeg
-    git clone https://github.com/echonest/remix.git
-    cd remix
-    git clone https://github.com/echonest/pyechonest pyechonest
-    python setup.py install
-    cd ..
-    rm -rf remix/
+    # Echonest specific symlink and install removed
 
     # Command-line programs used to speed up remixing
     apt-get install lame soundstretch shntool
@@ -107,19 +103,15 @@ else
     pip install pyyaml
     pip install numpy
     pip install mutagen
+    pip install librosa
+    pip install soundfile
 
     brew install jpeg
     pip install PIL
 
-    # The Echo Nest Remix API
+    # FFMpeg is a dependency for Librosa and general audio processing
     hash ffmpeg 2>&- || brew install ffmpeg
-    sudo ln -s `which ffmpeg` /usr/local/bin/en-ffmpeg
-    git clone https://github.com/echonest/remix.git
-    cd remix
-    git clone https://github.com/echonest/pyechonest pyechonest
-    python setup.py install
-    cd ..
-    rm -rf remix/
+    # Echonest specific symlink and install removed
 
     # Command-line programs used to speed up remixing
     brew install lame

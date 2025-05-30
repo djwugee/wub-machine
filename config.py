@@ -10,7 +10,7 @@ class config(object):
     """
 
     # Format of track identifiers (currently UUIDs)
-    uid = lambda(self): str( object.__getattribute__(self, 'uuid').uuid4() ).replace( '-', '' )
+    uid = lambda self: str( object.__getattribute__(self, 'uuid').uuid4() ).replace( '-', '' ) # Python 3 lambda syntax
     uid_re = r'[a-f0-9]{32}'
 
     last_updated = 0
@@ -38,8 +38,12 @@ class config(object):
         object.__getattribute__(self, 'logging').getLogger().info("Config file has changed, updating...")
         if not filename:
             filename = object.__getattribute__(self, 'config_file')
-        for k, v in object.__getattribute__(self, 'yaml').load(open(filename)).iteritems():
-            setattr(self, k, v)
+        # Use yaml.FullLoader or yaml.SafeLoader for PyYAML >= 5.1
+        with open(filename) as f:
+            data = object.__getattribute__(self, 'yaml').load(f, Loader=getattr(object.__getattribute__(self, 'yaml'), 'FullLoader', object.__getattribute__(self, 'yaml').SafeLoader))
+            if data: # Ensure data is not None if file is empty
+                 for k, v in data.items(): # Use .items() for dict iteration in Python 3
+                    setattr(self, k, v)
 
     def __getattribute__(self, name):
         """
