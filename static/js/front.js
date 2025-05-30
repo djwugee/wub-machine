@@ -75,21 +75,29 @@
   });
   watch = function(uid) {
     var s;
-    s = new io.Socket(window.location.hostname, {
-      port: window.wubconfig.socket_io_port,
-      resource: window.wubconfig.progress_resource + window.wubconfig.socket_extra_sep + uid,
-      rememberTransport: window.wubconfig.remember_transport,
-      reconnect: true
+    // Ensure window.wubconfig properties are defined, providing defaults if necessary for robustness.
+    var progressResource = (window.wubconfig && window.wubconfig.progress_resource) || '/socket.io/progress';
+    var socketExtraSep = (window.wubconfig && window.wubconfig.socket_extra_sep) || '/';
+    var rememberTransport = (window.wubconfig && typeof window.wubconfig.remember_transport !== 'undefined') ? window.wubconfig.remember_transport : true;
+    var socketIoPort = (window.wubconfig && window.wubconfig.socket_io_port) || window.location.port;
+
+    const socketPath = progressResource + socketExtraSep + uid;
+    
+    s = io(window.location.hostname + ":" + socketIoPort, {
+      path: socketPath,
+      rememberTransport: rememberTransport,
+      transports: ['websocket'] // Prioritize WebSocket
     });
-    s.on('connection', function(data) {
-      window.log("Socket opened, with data:");
-      return window.log(data);
+
+    s.on('connect', function() {
+      window.log("Socket connected.");
     });
-    s.on('disconnect', function(data) {
-      window.log("Socket closed, with data:");
-      return window.log(data);
+
+    s.on('disconnect', function(reason) {
+      window.log("Socket disconnected:", reason);
     });
-    s.on('message', function(data) {
+
+    s.on('progress_update', function(data) {
       var displayTag, html;
       $('.progress .text').html(data.text);
       switch (data.status) {
@@ -99,7 +107,7 @@
           });
           window.log("Error", data);
           document.title = "Error!";
-          return s.disconnect();
+          return s.disconnect(); // s.disconnect() is still valid for client-side initiated disconnect
         case 0:
           return document.title = "Waiting...";
         case 1:
@@ -110,13 +118,13 @@
           displayTag = (data.tag.title != null) && data.tag.title !== '';
           if (!$("#precontent").is(":visible")) {
             if (displayTag) {
-              $("#precontent").html("Currently remixing <strong>" + data.tag.title + "</strong>" + (data.tag.artist != null ? " by " + data.tag.artist + "..." : void 0));
+              $("#precontent").html("Currently remixing <strong>" + data.tag.title + "</strong>" + (data.tag.artist != null ? " by " + data.tag.artist + "..." : "")); // Fixed undefined concatenation
               $("#precontent").slideDown();
             }
           }
           if (data.progress === 1) {
             document.title = "Done!";
-            html = "<div class='ui360 ui360-vis " + (!displayTag ? 'center' : void 0) + "'><a href='" + data.tag.remixed + "'></a></div>";
+            html = "<div class='ui360 ui360-vis " + (!displayTag ? 'center' : '') + "'><a href='" + data.tag.remixed + "'></a></div>"; // Fixed undefined concatenation
             if (data.tag.art != null) {
               html += "<div id='art'><img src='" + data.tag.thumbnail + "' alt='" + data.tag.album + "' title='wubwubwub!' /></div>";
             }
@@ -144,7 +152,7 @@
           }
       }
     });
-    return s.connect();
+    // s.connect(); // Not needed in Socket.IO v4+
   };
   startCountdown = function() {
     var interval, timeLeft;

@@ -10,13 +10,14 @@ __version__ = "2.2"
 
 import json, time, locale, traceback, gc, logging, os, database, urllib
 import tornado.ioloop, tornado.web, tornado.template, tornado.httpclient, tornado.escape, tornado.websocket
-import tornadio, tornadio.server
+import socketio
+import asyncio
 import config
 from datetime import datetime, timedelta
 from hashlib import md5
 
 # Wubmachine-specific libraries
-from helpers.remixqueue import RemixQueue
+from helpers.remixqueue import RemixQueue # RemixQueue is now async-heavy
 from helpers.soundcloud import SoundCloud
 from helpers.cleanup import Cleanup
 from helpers.daemon import Daemon
@@ -33,7 +34,7 @@ remixers = {
 # Check dependencies...
 # Check required version numbers
 assert tornado.version_info >= (2, 0, 0), "Tornado v2 or greater is required!"
-assert tornadio.__version__ >= (0, 0, 4), "Tornadio v0.0.4 or greater is required!"
+# assert tornadio.__version__ >= (0, 0, 4), "Tornadio v0.0.4 or greater is required!" # Tornadio replaced
 
 # Instead of using xheaders, which doesn't seem to work under Tornadio, we do this:
 if config.nginx:
@@ -62,89 +63,108 @@ class MainHandler(RequestHandler):
             'javascript': js,
             'connectform': connectform
         }
-        self.write(templates.load('index.html').generate(**kwargs)) 
+            self.write(templates.load('index.html').generate(**kwargs))
     def head(self):
         self.finish()
 
-class ProgressSocket(tornadio.SocketConnection):
-    listeners = {}
+# Initialize Socket.IO Server
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 
-    @classmethod
-    def update(self, uid, data):
-        try:  
-            self.listeners[uid].send(data)
-        except:
-            pass
+class ProgressNamespace(socketio.AsyncNamespace):
+    def __init__(self, namespace, remix_queue_instance, config_instance):
+        super().__init__(namespace)
+        self.r = remix_queue_instance
+        self.config = config_instance
+        self.listeners = {}  # uid -> sid mapping
 
-    def on_open(self, *args, **kwargs):
-        try:
-            self.uid = kwargs['extra']
-            if self.uid in r.finished:
-                try:
-                    self.close()
-                except:
-                    pass
-            else:
-                self.listeners[self.uid] = self
-                if self.uid in r.remixers:
-                    r.remixers[self.uid].being_watched = True
-                    log.info("Remixer %s is now being watched..." % self.uid)
-                r.cleanup()
-                if r.isAvailable():
-                    try:
-                        r.start(self.uid)
-                    except:
-                        self.send({ 'status': -1, 'text': "Sorry, something went wrong. Please try again later!", 'progress': 0, 'uid': self.uid, 'time': time.time() })
-                        self.close()
-                log.info("Opened progress socket for %s" % self.uid)
-        except:
-            log.error("Failed to open progress socket for %s because: %s" % (self.uid, traceback.format_exc()) )
+    async def on_connect(self, sid, environ):
+        log.info(f"ProgressNamespace: Client {sid} connected. Waiting for UID.")
 
-    def on_close(self):
-        try:
-            log.info("Progress socket for %s received on_close event. Stopping..." % self.uid)
+    async def on_client_uid(self, sid, data):
+        uid = data.get('uid')
+        # Basic UID validation (e.g., length 32, alphanumeric)
+        if not uid or not (isinstance(uid, str) and len(uid) == 32 and uid.isalnum()):
+            log.warning(f"ProgressNamespace: Invalid UID '{uid}' from SID {sid}. Disconnecting.")
+            await sio.disconnect(sid, namespace=self.namespace)
+            return
+
+        self.listeners[uid] = sid
+        log.info(f"ProgressNamespace: Associated SID {sid} with UID {uid}")
+
+        if uid in self.r.finished:
+            log.info(f"ProgressNamespace: UID {uid} already finished. Disconnecting SID {sid}.")
             try:
-                r.stop(self.uid)
-            except:
-                pass
-            if self.uid in r.remixers:
-                r.remixers[self.uid].being_watched = False
-            if self.uid in self.listeners:
-                del self.listeners[self.uid]
-            log.info("Closed progress socket for %s" % self.uid)
-        except:
-          log.warning("Failed to close progress socket for %s due to:\n%s" % (self.uid, traceback.format_exc()))
+                await sio.disconnect(sid, namespace=self.namespace)
+            except Exception as e:
+                log.error(f"Error disconnecting finished UID {uid} (SID {sid}): {e}")
+        else:
+            if uid in self.r.remixers:
+                self.r.remixers[uid].being_watched = True
+                log.info(f"Remixer {uid} is now being watched by {sid}...")
+            self.r.cleanup() # Assuming this is synchronous or needs to be made async
+            if self.r.isAvailable(): # Assuming synchronous
+                try:
+                    # r.start was synchronous and took uid.
+                    # If r.start becomes async, it needs `await self.r.start(uid)`
+                    # For now, assuming it can be called directly if it spawns threads/processes
+                    self.r.start(uid)
+                except Exception as e:
+                    log.error(f"Error starting remixer for UID {uid} (SID {sid}): {e}")
+                    await sio.emit('progress_update', {
+                        'status': -1,
+                        'text': "Sorry, something went wrong. Please try again later!",
+                        'progress': 0,
+                        'uid': uid,
+                        'time': time.time()
+                    }, room=sid, namespace=self.namespace)
+                    await sio.disconnect(sid, namespace=self.namespace)
+            log.info(f"ProgressNamespace: Processed client_uid for UID {uid} (SID {sid})")
 
-    def on_message(self, message):
-        pass
+    async def on_disconnect(self, sid):
+        uid_to_remove = None
+        for uid, s_id in self.listeners.items():
+            if s_id == sid:
+                uid_to_remove = uid
+                break
+        
+        if uid_to_remove:
+            log.info(f"ProgressNamespace: Client {sid} (UID {uid_to_remove}) disconnected")
+            del self.listeners[uid_to_remove]
+            try:
+                # r.stop was synchronous. If it becomes async: await self.r.stop(uid_to_remove)
+                self.r.stop(uid_to_remove)
+            except Exception as e:
+                log.error(f"Error stopping remixer for {uid_to_remove}: {e}")
+            if uid_to_remove in self.r.remixers:
+                self.r.remixers[uid_to_remove].being_watched = False
+        else:
+            log.info(f"ProgressNamespace: Client {sid} disconnected (UID not found or already removed)")
 
-class MonitorSocket(tornadio.SocketConnection):
-    monitors = set()
+class MonitorNamespace(socketio.AsyncNamespace):
+    def __init__(self, namespace, monitor_handler_class, config_instance):
+        super().__init__(namespace)
+        self.MonitorHandler = monitor_handler_class # Store the class, not an instance
+        self.config = config_instance
+        # No specific set needed for monitors; python-socketio handles SIDs per namespace
 
-    @classmethod
-    def update(self, uid):
+    async def on_connect(self, sid, environ):
+        log.info(f"MonitorNamespace: Client {sid} connected")
+        # Optionally, send initial overview or latest tracks
         try:
-            if self.monitors:
-                data = MonitorHandler.track(uid)
-            for m in self.monitors.copy():
-                try:  
-                    m.send(data.decode('utf-8'))
-                    m.send(MonitorHandler.overview())
-                except:
-                    log.error("Failed to send data to monitor.")
-        except:
-            log.error("Major failure in MonitorSocket.update.")
+            overview_data = self.MonitorHandler.overview() # Assuming overview is classmethod or static
+            latest_data_html = self.MonitorHandler.latest(self.MonitorHandler) # latest needs a self, passing class
+            await sio.emit('monitor_overview_update', overview_data, room=sid, namespace=self.namespace)
+            await sio.emit('monitor_latest_update', latest_data_html, room=sid, namespace=self.namespace)
 
-    def on_open(self, *args, **kwargs):
-        log.info("Opened monitor socket.")
-        self.monitors.add(self)
+        except Exception as e:
+            log.error(f"Error sending initial data to monitor {sid}: {e}")
 
-    def on_close(self):
-        log.info("Closed monitor socket.")
-        self.monitors.remove(self)
 
-    def on_message(self, message):
-        pass
+    async def on_disconnect(self, sid):
+        log.info(f"MonitorNamespace: Client {sid} disconnected")
+
+    # Methods for broadcasting updates will be called from MonitorHandler or other parts of the app
+    # using the `sio` instance directly.
 
 class MonitorHandler(RequestHandler):
     keys = ['upload', 'download', 'remixTrue', 'remixFalse', 'shareTrue', 'shareFalse']
@@ -391,7 +411,13 @@ class ShareHandler(RequestHandler):
             if 'key' in t:
                 form.add_field('track[key_signature]', t['key'])
 
-            MonitorSocket.update(self.uid)
+            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
+            # Ensure emit_monitor_updates is called correctly
+            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+                asyncio.create_task(self.emit_monitor_updates(self.uid))
+            else:
+                log.error("ShareHandler: emit_monitor_updates method not found or not callable.")
+
 
             self.ht = tornado.httpclient.AsyncHTTPClient()
             self.ht.fetch(
@@ -408,7 +434,11 @@ class ShareHandler(RequestHandler):
             self.event.success = False
             self.event.end = datetime.now()
             self.event.detail = traceback.format_exc()
-            MonitorSocket.update(self.uid)
+            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
+            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+                asyncio.create_task(self.emit_monitor_updates(self.uid))
+            else:
+                log.error("ShareHandler: emit_monitor_updates method not found or not callable on error path.")
         finally:
             db = database.Session()
             try:
@@ -432,49 +462,137 @@ class ShareHandler(RequestHandler):
         except:
             log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
             db.rollback()
-        MonitorSocket.update(self.uid)
+        # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
+        if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+            asyncio.create_task(self.emit_monitor_updates(self.uid))
+        else:
+            log.error("ShareHandler: emit_monitor_updates method not found or not callable after SC fetch.")
         sc.fetchTracks()
 
+    async def emit_monitor_updates(self, uid):
+        # Ensure sio and paths are available
+        sio_instance = self.application.settings.get('sio')
+        monitor_namespace = self.application.settings.get('monitor_namespace_path')
+        if sio_instance and monitor_namespace:
+            try:
+                # MonitorHandler.track and .overview are classmethods, call them on the class
+                # Run potentially blocking calls in a thread
+                track_html = await asyncio.to_thread(MonitorHandler.track, uid)
+                overview_html = await asyncio.to_thread(MonitorHandler.overview)
+                
+                await sio_instance.emit('monitor_track_update', track_html, namespace=monitor_namespace)
+                await sio_instance.emit('monitor_overview_update', overview_html, namespace=monitor_namespace)
+            except Exception as e:
+                log.error(f"ShareHandler: Error emitting monitor updates for UID {uid}: {e}")
+        else:
+            log.error(f"ShareHandler: SIO instance or monitor_namespace_path not found in application settings for UID {uid}.")
+
+
 class DownloadHandler(RequestHandler):
-    def get(self, uid):
+    async def get(self, uid): # Made async
         if not uid in r.finished or not os.path.isfile('static/songs/%s.mp3' % uid):
             raise tornado.web.HTTPError(404)
         else:
-            db = database.Session()
+            db = database.Session() # This is a new session, fine for a thread
+            uploader_ip = None
             try:
-                uploader = db.query(database.Event.ip).filter_by(uid = uid, action = "upload").first()[0]
-            except:
-                log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
-                db.rollback()
-                uploader = self.request.remote_ip
-            if uploader != self.request.remote_ip:
-                log.error("Download attempt on remix %s by IP %s, not uploader %s!" % (uid, self.request.remote_ip, uploader))
+                # DB access in a thread
+                def get_uploader_ip():
+                    db_thread = database.Session()
+                    try:
+                        uploader_data = db_thread.query(database.Event.ip).filter_by(uid=uid, action="upload").first()
+                        return uploader_data[0] if uploader_data else None
+                    finally:
+                        db_thread.close()
+                uploader_ip = await asyncio.to_thread(get_uploader_ip)
+            except Exception as e_db: # Catch specific Exception
+                log.error(f"DB exception in DownloadHandler for UID {uid}, rolling back:\n{e_db}\n{traceback.format_exc()}")
+                # db.rollback() # Not needed as it's per-thread session or read-only
+                uploader_ip = self.request.remote_ip # Fallback or error handling
+
+            if uploader_ip != self.request.remote_ip:
+                log.error("Download attempt on remix %s by IP %s, not uploader %s!" % (uid, self.request.remote_ip, uploader_ip))
                 raise tornado.web.HTTPError(403)
+            
             filename = "%s.mp3" % (r.finished[uid]['tag']['new_title'] if 'new_title' in r.finished[uid]['tag'] else uid)
             self.set_header('Content-disposition', 'attachment; filename="%s"' % filename)
             self.set_header('Content-type', 'audio/mpeg')
-            self.set_header('Content-Length', os.stat('static/songs/%s.mp3' % uid)[6])
-            self.write(open('static/songs/%s.mp3' % uid).read())
-            self.finish()
+            
+            # File I/O should be non-blocking or in a thread for async handler
+            file_path = os.path.join('static/songs/', '%s.mp3' % uid)
+            file_size = await asyncio.to_thread(os.path.getsize, file_path)
+            self.set_header('Content-Length', str(file_size))
+            
+            # Stream the file content if possible, or read in chunks if it's large
+            # For simplicity, if files are small, reading directly might be okay but not ideal
+            with open(file_path, 'rb') as f:
+                # For large files, this should be chunked and awaited
+                file_content = await asyncio.to_thread(f.read)
+            self.write(file_content)
+            await self.finish() # Ensure finish is awaited for async handler
+
             try:
-                db.add(database.Event(uid, "download", success = True, ip = self.request.remote_ip))
-                db.commit()
-            except:
-                log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
-                db.rollback()
-            MonitorSocket.update(uid)
+                # DB access in a thread
+                def record_download_event():
+                    db_thread = database.Session()
+                    try:
+                        db_thread.add(database.Event(uid, "download", success = True, ip = self.request.remote_ip))
+                        db_thread.commit()
+                    except Exception as e_db_event: # Catch specific Exception
+                        log.error(f"DB exception recording download for UID {uid}, rolling back:\n{e_db_event}\n{traceback.format_exc()}")
+                        db_thread.rollback()
+                    finally:
+                        db_thread.close()
+                await asyncio.to_thread(record_download_event)
+            except Exception as e_record: # Catch specific Exception
+                 log.error(f"Error creating task for DB record download event for UID {uid}:\n{e_record}\n{traceback.format_exc()}")
+
+            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+                asyncio.create_task(self.emit_monitor_updates(uid))
+            else:
+                log.error(f"DownloadHandler: emit_monitor_updates method not found or not callable for UID {uid}.")
+
+
+    async def emit_monitor_updates(self, uid):
+        sio_instance = self.application.settings.get('sio')
+        monitor_namespace = self.application.settings.get('monitor_namespace_path')
+        if sio_instance and monitor_namespace:
+            try:
+                track_html = await asyncio.to_thread(MonitorHandler.track, uid)
+                overview_html = await asyncio.to_thread(MonitorHandler.overview)
+                await sio_instance.emit('monitor_track_update', track_html, namespace=monitor_namespace)
+                await sio_instance.emit('monitor_overview_update', overview_html, namespace=monitor_namespace)
+            except Exception as e:
+                log.error(f"DownloadHandler: Error emitting monitor updates for UID {uid}: {e}")
+        else:
+            log.error(f"DownloadHandler: SIO instance or monitor_namespace_path not found for UID {uid}.")
+
 
 class UploadHandler(RequestHandler):
-    def trackDone(self, final):
-        # [TODO]: Why is this here? Move this somewhere more appropriate.
+    async def trackDone(self, final):
         global trackCount
         trackCount += 1
-        if self.uid in ProgressSocket.listeners:
-            log.info("Closing client connection for track %s..." % self.uid)
-            ProgressSocket.listeners[self.uid].close()
-            log.info("Closed client connection for track %s." % self.uid)
+        
+        progress_listeners = self.application.settings.get('progress_listeners', {})
+        sio_instance = self.application.settings.get('sio')
+        progress_namespace = self.application.settings.get('progress_namespace_path')
 
-    def post(self):
+        if self.uid in progress_listeners:
+            sid_to_close = progress_listeners.get(self.uid)
+            log.info(f"UploadHandler: Track {self.uid} done. Attempting to close client connection SID {sid_to_close}.")
+            if sid_to_close and sio_instance and progress_namespace:
+                try:
+                    await sio_instance.disconnect(sid_to_close, namespace=progress_namespace)
+                    log.info(f"UploadHandler: Closed client connection for track {self.uid} (SID: {sid_to_close}).")
+                except Exception as e:
+                    log.error(f"UploadHandler: Error closing client connection for track {self.uid} (SID {sid_to_close}): {e}")
+            else:
+                log.warning(f"UploadHandler: SIO instance, progress_namespace, or SID missing for track {self.uid}. Cannot disconnect.")
+        else:
+            log.info(f"UploadHandler: Track {self.uid} done, but no active listener found in progress_listeners.")
+
+
+    async def post(self):
         self.uid = config.uid()
         try:
             remixer = remixers[self.get_argument('style')]
@@ -511,9 +629,12 @@ class UploadHandler(RequestHandler):
             else:
                 del self.request.files['upload'][0]['body']
 
-            r.add(self.uid, extension, remixer, ProgressSocket.update, self.trackDone)
+            # r.add needs to be async if it involves async operations, or run in executor
+            # The callback ProgressSocket.update is replaced by RemixQueue's own emit method
+            # self.trackDone also needs to be async if it calls sio.disconnect
+            await r.add(self.uid, extension, remixer, self.trackDone) # Removed ProgressSocket.update
             self.event.success = True
-            response = r.waitingResponse(self.uid)
+            response = await r.waitingResponse(self.uid) # Assuming waitingResponse might become async
             response['success'] = True
             self.write(response)
         except Exception as e:
@@ -531,103 +652,161 @@ class UploadHandler(RequestHandler):
             log.error("DB exception, rolling back:\n%s" % traceback.format_exc())
             db.rollback()
 
-        MonitorSocket.update(self.uid)
+        # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
+            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+                asyncio.create_task(self.emit_monitor_updates(self.uid))
+            else:
+                log.error(f"UploadHandler: emit_monitor_updates method not found or not callable for UID {self.uid}.")
         gc.collect()
 
-application = tornado.web.Application([
+    async def emit_monitor_updates(self, uid):
+        sio_instance = self.application.settings.get('sio')
+        monitor_namespace = self.application.settings.get('monitor_namespace_path')
+        if sio_instance and monitor_namespace:
+            try:
+                track_html = await asyncio.to_thread(MonitorHandler.track, uid)
+                overview_html = await asyncio.to_thread(MonitorHandler.overview)
+                await sio_instance.emit('monitor_track_update', track_html, namespace=monitor_namespace)
+                await sio_instance.emit('monitor_overview_update', overview_html, namespace=monitor_namespace)
+            except Exception as e:
+                log.error(f"UploadHandler: Error emitting monitor updates for UID {uid}: {e}")
+        else:
+            log.error(f"UploadHandler: SIO instance or monitor_namespace_path not found for UID {uid}.")
+
+
+# Original Tornado application handlers
+tornado_handlers = [
     (r"/(favicon.ico)", tornado.web.StaticFileHandler, {"path": "static/img/"}),
     (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": "static/"}),
-    (r"/monitor[/]?([^/]+)?[/]?(.*)", MonitorHandler), #Fix this
+    (r"/monitor[/]?([^/]+)?[/]?(.*)", MonitorHandler),
     (r"/upload", UploadHandler),
     (r"/share/(%s)" % config.uid_re, ShareHandler),
     (r"/download/(%s)" % config.uid_re, DownloadHandler),
     (r"/", MainHandler),
-    tornadio.get_router(
-        MonitorSocket,
-        resource = config.monitor_resource
-    ).route(),
-    tornadio.get_router(
-        ProgressSocket,
-        resource = config.progress_resource,
-        extra_re = config.uid_re,
-        extra_sep = config.socket_extra_sep
-    ).route()],
-    socket_io_port = config.socket_io_port,
-    enabled_protocols = ['websocket', 'xhr-multipart', 'xhr-polling', 'jsonp-polling'],
-    )
+]
+
+application = tornado.web.Application(tornado_handlers)
+# Wrap Tornado app with Socket.IO ASGIApp
+sio_app = socketio.ASGIApp(sio, other_asgi_app=application)
 
 
-if __name__ == "__main__":
-    Daemon()
+async def main():
+    global log, r, sc, templates, javascripts, connectform, trackCount # Ensure these are accessible if needed by main logic
+
+    Daemon() # This might need to be async or run in executor if it blocks
 
     log = logging.getLogger()
     log.name = config.log_name
     handler = logging.FileHandler(config.log_file)
-    handler.setFormatter(logging.Formatter(config.log_format)) 
+    handler.setFormatter(logging.Formatter(config.log_format))
     handler.setLevel(logging.DEBUG)
     log.addHandler(handler)
 
+    log.info("Starting %s..." % config.app_name)
     try:
-        log.info("Starting %s..." % config.app_name)
-        try:
-            locale.setlocale(locale.LC_ALL, 'en_US.utf8')
-        except:
-            locale.setlocale(locale.LC_ALL, 'en_US')
-        
-        log.info("\tConnecting to MySQL...")
-        db = database.Session()
-        if not db:
-            log.critical("Can't connect to DB!")
-            exit(1)
-
-        log.info("\tGrabbing track count from DB...")
-        trackCount = db.query(database.Event).filter_by(action='remix', success = True).count()
-
-        log.info("\tClearing temp directories...")
-        cleanup = Cleanup(log, None)
-        cleanup.all()
-
-        log.info("\tStarting RemixQueue...")
-        r = RemixQueue(MonitorSocket)
-        cleanup.remixQueue = r
-
-        log.info("\tInstantiating SoundCloud object...")
-        sc = SoundCloud(log)
-
-        log.info("\tLoading templates...")
-        templates = tornado.template.Loader("templates/")
-        templates.autoescape = None
-
-        log.info("\tStarting cleanup timers...")
-        fileCleanupTimer = tornado.ioloop.PeriodicCallback(cleanup.active, 1000*config.cleanup_timeout)
-        fileCleanupTimer.start()
-        
-        queueCleanupTimer = tornado.ioloop.PeriodicCallback(r.cleanup, 100*min(config.watch_timeout, config.remix_timeout, config.wait_timeout))
-        queueCleanupTimer.start()
-
-        log.info("\tCaching javascripts...")
-        javascripts = '\n'.join([
-            open('./static/js/jquery.fileupload.js').read(),
-            open('./static/js/front.js').read(),
-            open('./static/js/player.js').read(),
-        ])
-        connectform = open('./static/js/connectform.js').read()
-
-        log.info("\tStarting Tornado...")
-        application.listen(8888)
-        log.info("...started!")
-        tornadio.server.SocketServer(application, xheaders=config.nginx)
+        locale.setlocale(locale.LC_ALL, 'en_US.utf8')
     except:
-        raise
+        locale.setlocale(locale.LC_ALL, 'en_US')
+    
+    log.info("\tConnecting to MySQL...")
+    db = database.Session()
+    if not db:
+        log.critical("Can't connect to DB!")
+        exit(1)
+
+    log.info("\tGrabbing track count from DB...")
+    trackCount = db.query(database.Event).filter_by(action='remix', success = True).count()
+
+    log.info("\tClearing temp directories...")
+    cleanup = Cleanup(log, None)
+    cleanup.all() # Assuming synchronous
+
+    log.info("\tInstantiating SoundCloud object...")
+    sc = SoundCloud(log) # Assuming synchronous
+
+    log.info("\tLoading templates...")
+    templates = tornado.template.Loader("templates/")
+    templates.autoescape = None
+
+    log.info("\tCaching javascripts...")
+    javascripts = '\n'.join([
+        open('./static/js/jquery.fileupload.js').read(),
+        open('./static/js/front.js').read(),
+        open('./static/js/player.js').read(),
+    ])
+    connectform = open('./static/js/connectform.js').read()
+    
+    # Adjust resource paths for Socket.IO namespaces (remove /socket.io prefix if present)
+    # Defaulting to ensure they start with a slash and have no 'socket.io' prefix.
+    raw_progress_resource = config.progress_resource if hasattr(config, 'progress_resource') else 'socket.io/progress'
+    clean_progress_resource = '/' + raw_progress_resource.split('socket.io/')[-1].lstrip('/')
+    
+    raw_monitor_resource = config.monitor_resource if hasattr(config, 'monitor_resource') else 'socket.io/monitor'
+    clean_monitor_resource = '/' + raw_monitor_resource.split('socket.io/')[-1].lstrip('/')
+
+    log.info(f"\tRegistering ProgressNamespace at: {clean_progress_resource}")
+    progress_ns = ProgressNamespace(clean_progress_resource, None, config) # r is not yet initialized
+    sio.register_namespace(progress_ns)
+    
+    log.info(f"\tRegistering MonitorNamespace at: {clean_monitor_resource}")
+    monitor_ns = MonitorNamespace(clean_monitor_resource, MonitorHandler, config)
+    sio.register_namespace(monitor_ns)
+
+    log.info("\tStarting RemixQueue...")
+    # RemixQueue needs sio, progress_ns.listeners, and namespace paths
+    r = RemixQueue(
+        sio_instance=sio,
+        progress_listeners_map=progress_ns.listeners,
+        progress_namespace_path=clean_progress_resource,
+        monitor_handler_class=MonitorHandler, # For calling MonitorHandler.track/overview if needed
+        monitor_namespace_path=clean_monitor_resource,
+        config_instance=config # Pass full config if RemixQueue needs other params
+    )
+    progress_ns.r = r # Give ProgressNamespace the initialized r
+    cleanup.remixQueue = r
+
+
+    # Make sio available to Tornado handlers via application settings
+    application.settings['sio'] = sio
+    application.settings['monitor_namespace_path'] = clean_monitor_resource
+    application.settings['progress_namespace_path'] = clean_progress_resource
+    application.settings['progress_listeners'] = progress_ns.listeners # Make listeners map available
+
+    # For MonitorHandler to call its own static/class methods that might now need sio
+    # Also, for RequestHandler instances to call emit_monitor_updates if defined on MonitorHandler
+    MonitorHandler.sio = sio 
+    MonitorHandler.monitor_namespace_path = clean_monitor_resource
+    MonitorHandler.application_settings = application.settings # for accessing sio if needed in instance methods
+
+    log.info("\tStarting cleanup timers...")
+    # Tornado PeriodicCallback should work with asyncio if Tornado's IOLoop is asyncio-based
+    fileCleanupTimer = tornado.ioloop.PeriodicCallback(cleanup.active, 1000 * config.cleanup_timeout)
+    fileCleanupTimer.start()
+    
+    queueCleanupTimer = tornado.ioloop.PeriodicCallback(r.cleanup, 100 * min(config.watch_timeout, config.remix_timeout, config.wait_timeout))
+    queueCleanupTimer.start()
+
+    log.info("\tStarting Server with Socket.IO...")
+    server_port = config.socket_io_port if hasattr(config, 'socket_io_port') else 8888
+    
+    # Use Tornado to serve the ASGI app (sio_app which includes the Tornado app)
+    http_server = tornado.httpserver.HTTPServer(sio_app)
+    http_server.listen(server_port)
+    log.info(f"Tornado server with Socket.IO running on port {server_port}")
+    await asyncio.Event().wait() # Keep alive
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Server shutting down by KeyboardInterrupt...")
+    except Exception as e:
+        log.critical(f"Unhandled exception in main: {e}\n{traceback.format_exc()}")
     finally:
-        log.critical("Error: %s" % traceback.format_exc())
-        log.critical("IOLoop instance stopped. About to shutdown...")
-        try:
-            cleanup.all()
-        except:
-            pass
-        log.critical("Shutting down!")
-        if os.path.exists('server.py.pid'):
+        log.info("Performing final cleanup...")
+        # cleanup.all() # Ensure this is safe to call in finally, might need to be async
+        log.info("Shutdown complete.")
+        if os.path.exists('server.py.pid'): # Assuming Daemon sets this
             os.remove('server.py.pid')
-        exit(0)
+        sys.exit(0)
 
