@@ -33,7 +33,7 @@ class Track(Base):
     art = Column(String)
     thumbnail = Column(String)
     
-    events = relationship("Event")
+    events = relationship("Event", foreign_keys="Event.uid", primaryjoin="Track.uid == Event.uid", back_populates="track")
 
     def __init__(self, uid, hash = None, size = None, style = None, length = None, samplerate = None, channels = None, extension = None, bitrate = None, title = None, artist = None, album = None, art = None, thumbnail = None):
         self.uid = uid
@@ -66,7 +66,7 @@ class Event(Base):
     success = Column(Boolean)
     ip = Column(String)
     detail = Column(Text)
-    track = relationship("Track")
+    track = relationship("Track", foreign_keys=[uid], primaryjoin="Event.uid == Track.uid", back_populates="events")
 
     def __init__(self, uid, action, success = None, ip = None, detail = None):
         self.uid = uid

@@ -42,72 +42,54 @@ hash $packagemanager 2>&- || { echo >&2 "This installer requires $packagemanager
 
 # Install Python-dev
 if [[ $platform == 'linux' ]]; then
-    apt-get install git-core python-setuptools python-dev build-essential python-pip
+    apt-get update -y
+    apt-get install -y git-core python3-setuptools python3.10-dev build-essential python3-pip
 
-    # Install server-specific stuff: SQLAlchemy, Tornadio, Tornadio from HEADs
-    apt-get install python-mysqldb
-    pip install sqlalchemy
-
-    git clone https://github.com/facebook/tornado.git
-    cd tornado
-    python setup.py install
-    cd ..
-    rm -rf tornado/
-
-    git clone https://github.com/MrJoes/tornadio.git
-    cd tornadio
-    python setup.py install
-    cd ..
-    rm -rf tornadio/
+    # Install server-specific stuff: SQLAlchemy, python-socketio
+    apt-get install -y default-libmysqlclient-dev
+    python3 -m pip install mysqlclient
+    python3 -m pip install sqlalchemy
+    python3 -m pip install tornado>=5.0
+    python3 -m pip install "python-socketio[asgi,asyncio_client]"
 
     # Other handy things
-    apt-get install libyaml-dev
-    pip install pyyaml
-    pip install numpy
-    pip install mutagen
-    pip install librosa
-    pip install soundfile
+    apt-get install -y libyaml-dev
+    python3 -m pip install pyyaml
+    python3 -m pip install numpy
+    python3 -m pip install mutagen
+    python3 -m pip install librosa
+    python3 -m pip install soundfile
 
-    apt-get install libjpeg-dev
-    pip install PIL
+    apt-get install -y libjpeg-dev
+    python3 -m pip install Pillow
 
     # FFMpeg is a dependency for Librosa and general audio processing
-    apt-get install ffmpeg
+    apt-get install -y ffmpeg
     # Echonest specific symlink and install removed
 
     # Command-line programs used to speed up remixing
-    apt-get install lame soundstretch shntool
+    apt-get install -y lame soundstretch shntool
 
 else
     hash easy_install 2>&- || hash pip 2>&- || { echo >&2 "This installer requires easy_install or pip."; exit 1; }
     hash pip 2>&- || easy_install pip
 
-    # Install server-specific stuff: SQLAlchemy, Tornadio, Tornadio from HEADs
-    pip install python-mysqldb
-    pip install sqlalchemy
-
-    git clone https://github.com/facebook/tornado.git
-    cd tornado
-    python setup.py install
-    cd ..
-    rm -rf tornado/
-
-    git clone https://github.com/MrJoes/tornadio.git
-    cd tornadio
-    python setup.py install
-    cd ..
-    rm -rf tornadio/
+    # Install server-specific stuff: SQLAlchemy, python-socketio
+    python3 -m pip install mysqlclient
+    python3 -m pip install sqlalchemy
+    python3 -m pip install tornado>=5.0
+    python3 -m pip install "python-socketio[asgi,asyncio_client]"
 
     # Other handy things
     brew install libyaml
-    pip install pyyaml
-    pip install numpy
-    pip install mutagen
-    pip install librosa
-    pip install soundfile
+    python3 -m pip install pyyaml
+    python3 -m pip install numpy
+    python3 -m pip install mutagen
+    python3 -m pip install librosa
+    python3 -m pip install soundfile
 
     brew install jpeg
-    pip install PIL
+    python3 -m pip install Pillow
 
     # FFMpeg is a dependency for Librosa and general audio processing
     hash ffmpeg 2>&- || brew install ffmpeg

@@ -1,5 +1,5 @@
 # Frontend settings
-app_name: "your-app-name-here"
+app_name: "WubMachineLocal"
 
 # Remix Queue settings
 maximum_concurrent_remixes: 2
@@ -19,14 +19,14 @@ monitor_limit: 20
 monitor_time_limit: 172800 # in seconds, time in the past to allow searching/graphing
 
 # Server settings
-nginx: True
-database_connect_string: 'mysql+mysqldb://user:password@server/schema'
+nginx: False
+database_connect_string: 'sqlite:///./wubmachine.db'
 
 # Backend log-to-file and debug
-log_file: 'log.txt'
+log_file: 'wubmachine_debug.log'
 log_name: "web"
 log_format: '%(asctime)s (%(levelname)s) %(module)s:%(lineno)d: %(message)s'
-echo_database_queries: False
+echo_database_queries: True
 
 # Allowed mimetypes and file extensions
 allowed_file_extensions: ['.mp3', '.m4a', '.mp4', '.wav']
@@ -38,10 +38,10 @@ monitor_resource: 'watch'
 progress_resource: 'progress'
 
 # Soundcloud settings and strings
-soundcloud_consumer: "your-consumer-key-here"
-soundcloud_secret: "your-secret-key-here"
-soundcloud_redirect: 'your-redirect-url-here'
-soundcloud_app_id: 0  # YOUR APP ID HERE
+soundcloud_consumer: "YOUR_SOUNDCLOUD_CONSUMER_KEY_PLACEHOLDER"
+soundcloud_secret: "YOUR_SOUNDCLOUD_SECRET_KEY_PLACEHOLDER"
+soundcloud_redirect: 'http://localhost:8001/soundcloud_callback_placeholder'
+soundcloud_app_id: 0
 soundcloud_timeout: 300.0
 
 soundcloud_description: ""  # Your description here
