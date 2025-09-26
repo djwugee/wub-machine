@@ -348,7 +348,7 @@ class ElectroHouse(Remixer):
         current_tempo_for_analysis = self.tempo if hasattr(self, 'tempo') and self.tempo and self.tempo > 0 else ELECTRO_HOUSE_TARGET_TEMPO
 
         if target == "beats":
-            if not hasattr(self, 'beat_times') or not self.beat_times: return []
+            if not hasattr(self, 'beat_times') or self.beat_times.size == 0: return []
             beat_duration = 60.0 / current_tempo_for_analysis
             for i, start_t in enumerate(self.beat_times):
                 end_t = self.beat_times[i+1] if i+1 < len(self.beat_times) else start_t + beat_duration
@@ -593,7 +593,7 @@ class ElectroHouse(Remixer):
         # Tempo and Beats
         # self.tempo (original song's tempo) vs self.template['tempo'] (target electro house tempo)
         detected_tempo, beat_frames = librosa.beat.beat_track(y=y_mono_for_analysis, sr=self.sr)
-        self.tempo = detected_tempo if detected_tempo > 0 else ELECTRO_HOUSE_TARGET_TEMPO # Use detected, fallback to target
+        self.tempo = float(detected_tempo) if float(detected_tempo) > 0 else ELECTRO_HOUSE_TARGET_TEMPO # Use detected, fallback to target
         self.beat_times = librosa.frames_to_time(beat_frames, sr=self.sr)
         
         # Sections

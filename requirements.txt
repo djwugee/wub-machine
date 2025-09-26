@@ -1,0 +1,7 @@
+numpy
+mutagen
+Pillow
+librosa
+soundfile
+pyyaml
+sqlalchemy

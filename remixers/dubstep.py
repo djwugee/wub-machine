@@ -291,7 +291,7 @@ class Dubstep(Remixer):
 
         # Use self.beat_times (list of start times) and self.bar_times (list of (start,end) tuples)
         # The original code expected at least 16 beats for the first 4 bars.
-        if not self.beat_times or len(self.beat_times) < 16:
+        if self.beat_times.size == 0 or len(self.beat_times) < 16:
             # Fallback: Song is not long or identifiable enough. Create synthetic beat timings.
             song_duration_sec = librosa.get_duration(y=self.y, sr=self.sr)
             if song_duration_sec == 0: song_duration_sec = 1.0 # Avoid division by zero for empty audio
@@ -527,8 +527,8 @@ class Dubstep(Remixer):
         len_splash = splash_y.shape[1]
         max_len = max(len_wub, len_splash)
         
-        wub_padded = librosa.util.pad_center(wub_y, max_len, axis=1) if len_wub < max_len else wub_y[:, :max_len]
-        splash_padded = librosa.util.pad_center(splash_y, max_len, axis=1) if len_splash < max_len else splash_y[:, :max_len]
+        wub_padded = librosa.util.pad_center(wub_y, size=max_len, axis=1) if len_wub < max_len else wub_y[:, :max_len]
+        splash_padded = librosa.util.pad_center(splash_y, size=max_len, axis=1) if len_splash < max_len else splash_y[:, :max_len]
         wub_plus_splash = (wub_padded + splash_padded) * 0.5 # Averaging mix
         
         mixed_audio_a = self.truncatemix(wub_plus_splash, orig_bar_y, mix_f)
@@ -538,8 +538,8 @@ class Dubstep(Remixer):
         len_hats = hats_y.shape[1]
         max_len_b = max(len_wub_break, len_hats)
 
-        wub_break_padded = librosa.util.pad_center(wub_break_y, max_len_b, axis=1) if len_wub_break < max_len_b else wub_break_y[:, :max_len_b]
-        hats_padded = librosa.util.pad_center(hats_y, max_len_b, axis=1) if len_hats < max_len_b else hats_y[:, :max_len_b]
+        wub_break_padded = librosa.util.pad_center(wub_break_y, size=max_len_b, axis=1) if len_wub_break < max_len_b else wub_break_y[:, :max_len_b]
+        hats_padded = librosa.util.pad_center(hats_y, size=max_len_b, axis=1) if len_hats < max_len_b else hats_y[:, :max_len_b]
         wub_break_plus_hats = (wub_break_padded + hats_padded) * 0.5 # Averaging mix
 
         mixed_audio_b = self.truncatemix(wub_break_plus_hats, orig_bar_y, mix_f)
@@ -572,7 +572,7 @@ class Dubstep(Remixer):
         
         # Tempo and Beats
         estimated_tempo, self.beat_frames = librosa.beat.beat_track(y=y_mono, sr=self.sr)
-        self.tempo = estimated_tempo 
+        self.tempo = float(estimated_tempo)
         self.beat_times = librosa.frames_to_time(self.beat_frames, sr=self.sr)
         
         # Sections
