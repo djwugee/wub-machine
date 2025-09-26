@@ -26,10 +26,8 @@ If you're interested, it's relatively simple to use this to create your own remi
 
 The Wub Machine has only been tested on OS X and Ubuntu, but should theoretically work anywhere the dependencies are installed.
 The installer script is currently a bit overzealous and installs a bunch of stuff, but *should* work.
-You'll need an [API key from the Echo Nest](http://developer.echonest.com/account/register) to setup the Wub Machine, which you should then set as an environment variable ($ECHO_NEST_API_KEY).
 The Wub Machine itself has a large list of dependencies, which the install.sh tries to setup:
 
- * [echonest-remix](https://github.com/echonest/remix)
  * ffmpeg
  * lame
  * soundstretch

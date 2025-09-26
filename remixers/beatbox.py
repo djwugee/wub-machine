@@ -22,11 +22,6 @@ def stddev(xArr):
 # based on the scaled Librosa features from the previous step.
 
 def are_kicks(features):
-    # Original: bright = x.timbre[1] < 20, attack = x.timbre[3] > 80
-    # features[1] is centroid_bright, features[3] is attack_proxy
-    # Assuming scaling: centroid/100, attack_proxy*100
-    # So, new bright condition: features[1] < 0.2 (orig Echonest bright was low for kicks)
-    # And new attack condition: features[3] > 80 (orig Echonest attack was high for kicks)
     # Kick characteristics: low brightness (centroid), strong attack
     # Let's try to match:
     # brightness (spectral centroid) is low
@@ -39,8 +34,6 @@ def are_kicks(features):
     return is_loud_enough and is_low_brightness # Prioritizing loudness and low centroid for kicks
 
 def are_snares(features):
-    # Original: loud = x.timbre[0] > 10, bright = x.timbre[1] > 100 and x.timbre[1] < 150,
-    # flat =  x.timbre[2] < 30, attack = x.timbre[3] > 20
     # Snare characteristics: mid-high brightness, moderate attack, presence of noise (flatter spectrum)
     # loudness (rms)
     # brightness (spectral centroid)
@@ -54,17 +47,11 @@ def are_snares(features):
     return is_loud and is_mid_high_brightness and is_relatively_flat
 
 def are_hats(features):
-    # Original: loud = x.timbre[0] < 45, bright = x.timbre[1] > 90,
-    # flat =  x.timbre[2] < 0 (this was likely an error, flatness is usually > 0)
-    # attack = x.timbre[3] > 70, what = x.timbre[4] < 40
     # Hat characteristics: high brightness, sharp attack, often less loud
-    # Echonest flatness < 0 for hats seems odd. Spectral flatness is typically [0,1].
-    # Let's assume it meant low tonal content or perhaps it was a different scale.
     # For Librosa, high flatness = more noise-like. Low flatness = more tonal.
     # Hats are noisy but also have sharp attacks.
     is_not_too_loud = features[0] < 70 # (needs tuning)
     is_high_brightness = features[1] > 150 # (needs tuning)
-    # For flatness, Echonest's timbre[2] < 0 might have meant "very noisy" or "not tonal".
     # With Librosa's spectral_flatness (0 to 1), higher means more noise-like.
     # So we might want higher flatness for hats. Let's use features[2] > 0.5 as a starting point.
     is_noisy = features[2] > 0.4 # (needs tuning)
@@ -96,7 +83,6 @@ class Beatbox(Remixer):
         #for i, segment in enumerate(self.original.analysis.segments):
         #    segment.encode("seg_%s.mp3" % i)
         print("\n\n\n") # Python 3 print
-        #loudnesses = [x.timbre[0] for i, x in enumerate(self.original.analysis.segments)] # OLD ECHONEST
         # Replace with Librosa based segmentation and feature extraction
         # This will be a significant change. For now, I'll comment out the old timbre processing.
         # And prepare for new feature extraction.
@@ -106,13 +92,9 @@ class Beatbox(Remixer):
         # top_db=30 might need tuning.
         segment_intervals_rms = librosa.effects.split(self.y, top_db=30) # Returns (N, 2) array of start and end samples
 
-        # Convert segment_intervals from samples to time for easier comparison with Echonest logic if needed
         segments_time = librosa.samples_to_time(segment_intervals_rms, sr=self.sr)
 
         # Extract features for each segment
-        # This is a simplified example. Echonest timbre is a complex vector.
-        # We'll try to map some features.
-        # Echonest timbre: [loudness, brightness, flatness, attack, and 8 more]
         
         librosa_segments = []
         for i in range(segment_intervals_rms.shape[0]):
@@ -139,15 +121,12 @@ class Beatbox(Remixer):
             # 3: Attack (Onset strength - as a proxy, might need more sophisticated like librosa.onset.onset_strength)
             # For simplicity, let's use spectral flux (related to changes, could indicate attack)
             # Or, more directly, onset_strength. Onset strength is usually computed over frames.
-            # Let's use Zero Crossing Rate as a simple proxy for "attack" or sharpness for now, it's not ideal.
-            # Echonest's "attack" was likely more complex.
             # A better proxy for "attack" might be the max of the onset envelope over the segment.
             onset_env = librosa.onset.onset_strength(y=segment_y_mono, sr=self.sr)
             avg_attack_proxy = np.max(onset_env) if onset_env.size > 0 else 0.0
 
 
             # Store features in a dictionary or a simple list for now
-            # The original code used x.timbre[0], x.timbre[1], etc.
             # We'll create a list of feature lists/arrays for each segment
             # For are_kicks etc. functions, we'll pass this feature list/array
             current_features = {
@@ -155,7 +134,6 @@ class Beatbox(Remixer):
                 "end": segments_time[i,1], # end time
                 "duration": segments_time[i,1] - segments_time[i,0],
                 "librosa_features": [avg_rms * 100, avg_centroid / 100, avg_flatness * 10, avg_attack_proxy * 100] # Scaled to roughly match old ranges - NEEDS TUNING
-                # Add more features if needed to mimic the 12 Echonest timbre dimensions
             }
             librosa_segments.append(current_features)
 
@@ -232,7 +210,6 @@ class Beatbox(Remixer):
         # This seems to be a flawed attempt to prevent overlaps from the *same* sample type if segments are too close.
         # A more robust way for preventing overlap would be to check if the current segment.start is too close to the *previous* segment.start
         # For now, I'll simplify and just add the sample at segment.start
-        # The original Echonest segment.start was in seconds. librosa_segments also store start in seconds.
 
         for seg_data in kicks: # seg_data is a dict with 'start', 'duration', 'librosa_features'
             start_time = seg_data['start']
@@ -301,6 +278,8 @@ class Beatbox(Remixer):
         # So, transpose before writing.
         sf.write(self.tempfile, mixed_audio.T, self.sr)
         
+        self.lame(self.tempfile, self.outfile)
+
         # After writing to self.tempfile, the base Remixer's run() method
         # should call self.lame(self.tempfile, self.outfile) if outfile is mp3.
         # The old code `audio.mix(empty, self.original, 0.5).encode('mixed.mp3')`

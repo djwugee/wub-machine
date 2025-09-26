@@ -134,7 +134,11 @@ class Remixer(Thread):
     def handleError(self, e):
         self.step = "Hmm... something went wrong. Please try again later!"
         progress = self.logbase()
-        progress['debug'] = str(e) # Python 3: unicode() is str()
+        debug_info = traceback.format_exc()
+        progress['debug'] = debug_info
+        print(f"--- REMIXER ERROR ---", file=sys.stderr)
+        print(debug_info, file=sys.stderr)
+        print(f"--- END REMIXER ERROR ---", file=sys.stderr)
         self.last = progress
 
     def error(self, text):
@@ -228,7 +232,8 @@ class Remixer(Thread):
             while progress and self.status != -1:                       #   MUST END WITH False value, or else this will block forever
                 self.last = progress
                 for callback in self.callbacks:                             #   Send all progress updates
-                    callback(progress)
+                    if callback:
+                        callback(progress)
                 progress = self.processqueue.get(True, self.timeout)      #   Grab another progress update from the process
         except Exception as e: # Python 3 syntax
             self.status = -1
@@ -274,7 +279,31 @@ class Remixer(Thread):
             Use the installed (hopefully latest) build of
             LAME to get a really, really high quality MP3.
         """
-        r = check_call(['lame', '-S', '--preset', 'fast', 'medium', str(infile), str(outfile)])
+        print(f"--- LAME DIAGNOSTICS ---")
+        print(f"Input file: {infile}")
+        if not path.exists(infile):
+            print("LAME ERROR: Input file does not exist.")
+            raise FileNotFoundError("Input file for lame not found: %s" % infile)
+        print(f"Input file size: {path.getsize(infile)} bytes")
+
+        print(f"Output file: {outfile}")
+
+        command = ['lame', '-S', '--preset', 'fast', 'medium', str(infile), str(outfile)]
+        print(f"Running command: {' '.join(command)}")
+
+        try:
+            r = check_call(command)
+            print("LAME command completed successfully.")
+        except Exception as e:
+            print(f"LAME command failed: {e}")
+            raise
+
+        if path.exists(outfile):
+            print(f"Output file created successfully. Size: {path.getsize(outfile)} bytes")
+        else:
+            print("LAME ERROR: Output file was not created.")
+
+        print("--- END LAME DIAGNOSTICS ---")
         return r
 
     def mono_to_stereo(self, y_mono):
@@ -353,7 +382,7 @@ class Remixer(Thread):
         args = ['shntool', 'join', '-z', self.uid, '-q', '-d', self.tempdir]
         for i in range(0, self.encoded):
             args.append("%s%s%03d.wav" % (self.tempdir, self.uid, i))
-        call(args)
+        check_call(args)
         rename("%sjoined%s.wav" % (self.tempdir, self.uid), filename)
         for i in range(0, self.encoded):
             unlink("%s%s%03d.wav" % (self.tempdir, self.uid, i))
@@ -405,15 +434,12 @@ class Remixer(Thread):
 
     def detectSong(self, analysis_unused): # Parameter kept for compatibility if subclasses call it
         """
-            Placeholder for song detection. Original Echonest functionality removed.
+            Placeholder for song detection.
             Metadata detection primarily relies on mutagen in getTag.
         """
-        # The original implementation relied on self.original.analysis.metadata
-        # which is no longer available with Librosa.
+        # The original implementation relied on analysis metadata.
         # Subclasses might have their own ways to use the 'analysis' (now 'analysis_unused')
         # if they perform their own analysis and want to update tags.
-        # For the base Remixer class, this function no longer has a specific role
-        # in populating tags from Echonest.
         pass
 
 
@@ -544,7 +570,6 @@ class Remixer(Thread):
             'segments_time' is a list of (start_time, end_time) tuples for audio segments.
             'target_indices' is a list of indices into 'segments_time' to calculate loudness for.
 
-            This is a placeholder replacement for the Echonest-based loudness.
             Actual usage will depend on how segments/bars are defined by subclasses using Librosa.
         """
         if y is None or sr is None:

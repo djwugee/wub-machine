@@ -434,7 +434,7 @@ class ElectroHouse(Remixer):
         
         return np.clip(mix_f, 0.0, 1.0) # Ensure it's strictly between 0 and 1
 
-    def compileIntro(self, section_idx=0): # section_idx instead of Echonest section object
+    def compileIntro(self, section_idx=0):
         # Load intro sample
         intro_sample_path = path.join(self.sample_path, self.template['intro'])
         intro_y, intro_sr = librosa.load(intro_sample_path, sr=self.sr) # Resample to self.sr
@@ -583,7 +583,7 @@ class ElectroHouse(Remixer):
         
         # self.detectSong() is a placeholder in base Remixer, not strictly needed if getTag() works.
         # if not 'title' in self.tag:
-        #    self.detectSong(None) # Original took Echonest audio object, now takes None
+        #    self.detectSong(None)
 
         self.st = FastModify() # Librosa-based
         
@@ -630,7 +630,6 @@ class ElectroHouse(Remixer):
         # --- Intro ---
         num_sections_for_log = len(self.sections) if self.sections else 1
         self.log("Arranging intro...", 40.0 / (num_sections_for_log + 1))
-        # compileIntro no longer takes Echonest audio.section or intro Echonest object
         intro_final_y = self.compileIntro(section_idx=0) # Pass section index
         self.partialEncode(intro_final_y, self.sr) # Use self.sr (FIXED_SR)
         del intro_final_y

@@ -117,7 +117,7 @@ a+="    You are logged in as:                                                   
 				{% if track['artwork_url']%}
 					<img src="{{ track['artwork_url']}}" title="{{ track['title']}}" alt="{{ track['title']}}" style="margin-right: 2px;" height="80px" width="80px" />
 				{% end %}
-				<iframe width="{% if track['artwork_url']%}514px{% else %}100%{% endif %}" height="166" scrolling="no" frameborder="no" allow="autoplay"
+				<iframe width="{% if track['artwork_url']%}514px{% else %}100%{% end %}" height="166" scrolling="no" frameborder="no" allow="autoplay"
 					src="https://w.soundcloud.com/player/?url={{ track['uri'] }}&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true">
 				</iframe>
 				<span><a href="{{ track['permalink_url']}}" target="_blank">{{ track['title']}}</a></span> 
@@ -129,9 +129,6 @@ a+="    You are logged in as:                                                   
       <br />
       <br />
 			<div id="footer">
-        <a target="_blank" href="http://the.echonest.com" style="float: right; margin-left: 10px; margin-right: 120px;">
-          <img src="/static/img/ten.gif" title="the wonderful, wonderful echo nest" alt="the echo nest" />
-        </a>
         <a target="_blank" href="http://blog.petersobot.com/the-wub-machine-revisited">about</a>
         |
         <a href="mailto:wubmachine@petersobot.com">feedback</a>

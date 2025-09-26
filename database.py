@@ -13,25 +13,25 @@ Base = declarative_base()
 class Track(Base):
     __tablename__ = 'tracks'
     id = Column(Integer, primary_key=True)
-    uid = Column(CHAR(length=32))
+    uid = Column(CHAR(length=32), index=True)
     time = Column(DateTime)
     hash = Column(CHAR(length=32))
     size = Column(Integer)
-    style = Column(String)
+    style = Column(String(50))
     
     # Tag Attributes
     length = Column(Integer)
     samplerate = Column(Integer)
     channels = Column(Integer)
-    extension = Column(String)
+    extension = Column(String(10))
     bitrate = Column(Integer)
 
-    title = Column(String)
-    artist = Column(String)
-    album = Column(String)
+    title = Column(String(255))
+    artist = Column(String(255))
+    album = Column(String(255))
     
-    art = Column(String)
-    thumbnail = Column(String)
+    art = Column(String(255))
+    thumbnail = Column(String(255))
     
     events = relationship("Event")
 
@@ -60,11 +60,11 @@ class Event(Base):
     __tablename__ = 'events'
     id = Column(Integer, primary_key=True)
     uid = Column(CHAR(length=32) , ForeignKey('tracks.uid'))
-    action = Column(String)
+    action = Column(String(50))
     start = Column(DateTime)
     end = Column(DateTime)
     success = Column(Boolean)
-    ip = Column(String)
+    ip = Column(String(50))
     detail = Column(Text)
     track = relationship("Track")
 
@@ -95,4 +95,17 @@ engine = create_engine(
     poolclass=QueuePool,
     pool_recycle=10
 )
+
+# Create database if it does not exist.
+from sqlalchemy.engine import url
+from sqlalchemy import text
+u = url.make_url(config.database_connect_string)
+server_engine = create_engine(
+    f"mysql+mysqldb://{u.username}:{u.password}@{u.host}:{u.port or 3306}",
+    pool_recycle=10
+)
+with server_engine.connect() as conn:
+    conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {u.database}"))
+
+Base.metadata.create_all(engine)
 Session = scoped_session(sessionmaker(engine))

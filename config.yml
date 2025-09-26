@@ -20,7 +20,7 @@ monitor_time_limit: 172800 # in seconds, time in the past to allow searching/gra
 
 # Server settings
 nginx: True
-database_connect_string: 'mysql+mysqldb://user:password@server/schema'
+database_connect_string: 'mysql+mysqldb://wubuser:wubpassword@localhost/wubmachine'
 
 # Backend log-to-file and debug
 log_file: 'log.txt'

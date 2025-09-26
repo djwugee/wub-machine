@@ -23,7 +23,6 @@ from os import unlink
 import librosa
 import numpy as np
 import soundfile as sf
-# Echonest imports (selection, sorting, audio) are removed
 
 class Dubstep(Remixer):
     """
@@ -176,14 +175,8 @@ class Dubstep(Remixer):
             Result can be fed into a mixing function as the mix ratio.
         """
         mixfactor = 0
-        # These constants were from the original, related to Echonest's loudness scale (approx -60 to 0 dB).
-        # Librosa RMS is typically 0 to 1. We'll need to adjust or reinterpret.
-        # For now, let's assume self.loudness returns a value that can be used similarly,
-        # or that the self.loudness function in Remixer class was adjusted to output a comparable range.
         # The updated Remixer.loudness calculates mean RMS, which is positive.
-        # Echonest loudness_max was often negative (dBFS).
         # This part needs careful re-evaluation of the original intent of 'a' and 'b'.
-        # Original Echonest loudness: "Loudness in dB an an average of -17.遍历, with a range of roughly -60 to 0."
         # Let's assume self.loudness now returns RMS (0 to 1).
         # To make it somewhat comparable to a dB-like scale for this formula, we can convert RMS to dB.
         # However, the formula (loud+a)/(loud+b) is sensitive to the scale of loud, a, and b.
@@ -210,7 +203,6 @@ class Dubstep(Remixer):
         # mixpoint = self.template['mixpoint'] = 18
         # a = 59.33 + 18 = 77.33
         # b = 125.33 + 18 = 143.33
-        # Echonest loudness was negative dB. Librosa RMS is positive.
         # This formula needs to be inverted or re-thought for RMS.
         # If RMS is high (e.g. 0.8), we want mixfactor to be low (less wub).
         # If RMS is low (e.g. 0.1), we want mixfactor to be high (more wub).
@@ -393,7 +385,6 @@ class Dubstep(Remixer):
         concatenated_song_pieces = self._get_audio_pieces(self.y, self.sr, source_audio_segments_times)
 
         # Tempo shifting
-        # Original Echonest time_signature logic is tricky to replicate directly without full measure analysis.
         # Librosa's beat_track gives tempo, but not discrete time signature changes.
         # For now, assume constant time signature or rely on self.st.shiftTempo to handle duration adjustments.
         # The target tempo is self.template['tempo'] (140 BPM). Original tempo is self.tempo.
@@ -670,15 +661,15 @@ class Dubstep(Remixer):
         self.log("Mixing down WAV...", 5) # Changed log from "Mixing..."
         self.mixwav(self.tempfile) # Concatenates all partially encoded WAVs
 
+        self.log("Encoding to MP3...", 5) # Changed log from "Mastering..."
+        self.lame(self.tempfile, self.outfile) # self.tempfile is WAV, self.outfile is MP3
+
         # Original file deletion logic
         if self.deleteOriginal and hasattr(self, 'infile') and self.infile:
             try:
                 unlink(self.infile)
             except OSError: # More specific exception
                 pass 
-
-        self.log("Encoding to MP3...", 5) # Changed log from "Mastering..."
-        self.lame(self.tempfile, self.outfile) # self.tempfile is WAV, self.outfile is MP3
         
         # It's good practice to remove the large temporary WAV after MP3 encoding
         try:

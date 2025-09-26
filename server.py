@@ -8,7 +8,7 @@ __author__ = "Peter Sobot"
 __copyright__ = "Copyright (C) 2011 Peter Sobot"
 __version__ = "2.2"
 
-import json, time, locale, traceback, gc, logging, os, database, urllib.parse
+import json, time, locale, traceback, gc, logging, os, database, urllib.parse, sys
 import tornado.ioloop, tornado.web, tornado.template, tornado.httpclient, tornado.escape, tornado.websocket
 import socketio
 import asyncio
@@ -63,12 +63,12 @@ class MainHandler(RequestHandler):
             'javascript': js,
             'connectform': connectform
         }
-            self.write(templates.load('index.html').generate(**kwargs))
+        self.write(templates.load('index.html').generate(**kwargs))
     def head(self):
         self.finish()
 
 # Initialize Socket.IO Server
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+sio = socketio.AsyncServer(async_mode='tornado', cors_allowed_origins='*')
 
 class ProgressNamespace(socketio.AsyncNamespace):
     def __init__(self, namespace, remix_queue_instance, config_instance):
@@ -169,8 +169,7 @@ class MonitorNamespace(socketio.AsyncNamespace):
 class MonitorHandler(RequestHandler):
     keys = ['upload', 'download', 'remixTrue', 'remixFalse', 'shareTrue', 'shareFalse']
 
-    @tornado.web.asynchronous
-    def get(self, sub=None, uid=None):
+    async def get(self, sub=None, uid=None):
         if sub:
             sections = {
                 'graph': self.graph,
@@ -181,7 +180,6 @@ class MonitorHandler(RequestHandler):
             }
             if sub in sections:
                 self.write(sections[sub]())
-                self.finish()
             else:
                 raise tornado.web.HTTPError(404)
         else:
@@ -191,7 +189,6 @@ class MonitorHandler(RequestHandler):
                 'config': "window.wubconfig = %s;" % json.dumps(config.javascript)
             }
             self.write(templates.load('monitor.html').generate(**kwargs))
-            self.finish()
 
     def clearqueue(self):
         del self.watchqueue[:]
@@ -377,8 +374,7 @@ class MonitorHandler(RequestHandler):
         return history
 
 class ShareHandler(RequestHandler):
-    @tornado.web.asynchronous
-    def get(self, uid):
+    async def get(self, uid):
         self.uid = uid
         try:
             token = str(self.get_argument('token'))
@@ -424,15 +420,33 @@ class ShareHandler(RequestHandler):
 
 
             self.ht = tornado.httpclient.AsyncHTTPClient()
-            self.ht.fetch(
+            response = await self.ht.fetch(
                 "https://api.soundcloud.com/tracks.json",
-                self._get,
                 method = 'POST',
                 headers = {"Content-Type": form.get_content_type()},
                 body = str(form),
                 request_timeout = timeout,
                 connect_timeout = timeout
             )
+
+            self.write(response.body)
+            r_data = json.loads(response.body) # Renamed to avoid conflict with global 'r'
+            try:
+                db = database.Session()
+                self.event = db.merge(self.event) # Ensure self.event was created in get()
+                self.event.success = True
+                self.event.end = datetime.now()
+                self.event.detail = r_data['permalink_url'].encode('ascii', 'ignore')
+                db.commit()
+            except Exception as e_db_share_get:
+                log.error(f"DB exception after SoundCloud share for UID {self.uid}, rolling back: {e_db_share_get}\n{traceback.format_exc()}")
+                db.rollback()
+            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
+            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
+                asyncio.create_task(self.emit_monitor_updates(self.uid))
+            else:
+                log.error("ShareHandler: emit_monitor_updates method not found or not callable after SC fetch.")
+            sc.fetchTracks()
         except Exception as e_share_get:
             self.write({ 'error': traceback.format_exc().splitlines()[-1] })
             self.event.success = False
@@ -452,27 +466,6 @@ class ShareHandler(RequestHandler):
             except Exception as e_db_share_event:
                 log.error(f"DB exception saving share event for UID {self.uid}, rolling back: {e_db_share_event}\n{traceback.format_exc()}")
                 db.rollback()
-    
-    def _get(self, response):
-        self.write(response.body)
-        self.finish()
-        r_data = json.loads(response.body) # Renamed to avoid conflict with global 'r'
-        try:
-            db = database.Session()
-            self.event = db.merge(self.event) # Ensure self.event was created in get()
-            self.event.success = True
-            self.event.end = datetime.now()
-            self.event.detail = r_data['permalink_url'].encode('ascii', 'ignore')
-            db.commit()
-        except Exception as e_db_share_get:
-            log.error(f"DB exception after SoundCloud share for UID {self.uid}, rolling back: {e_db_share_get}\n{traceback.format_exc()}")
-            db.rollback()
-        # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
-        if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
-            asyncio.create_task(self.emit_monitor_updates(self.uid))
-        else:
-            log.error("ShareHandler: emit_monitor_updates method not found or not callable after SC fetch.")
-        sc.fetchTracks()
 
     async def emit_monitor_updates(self, uid):
         # Ensure sio and paths are available
@@ -683,6 +676,7 @@ class UploadHandler(RequestHandler):
 
 # Original Tornado application handlers
 tornado_handlers = [
+    (r"/socket.io/", socketio.get_tornado_handler(sio)),
     (r"/(favicon.ico)", tornado.web.StaticFileHandler, {"path": "static/img/"}),
     (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": "static/"}),
     (r"/monitor[/]?([^/]+)?[/]?(.*)", MonitorHandler),
@@ -693,15 +687,15 @@ tornado_handlers = [
 ]
 
 application = tornado.web.Application(tornado_handlers)
-# Wrap Tornado app with Socket.IO ASGIApp
-sio_app = socketio.ASGIApp(sio, other_asgi_app=application)
 
 
 async def main():
+    print("DEBUG: main() started")
     global log, r, sc, templates, javascripts, connectform, trackCount # Ensure these are accessible if needed by main logic
 
-    Daemon() # This might need to be async or run in executor if it blocks
+    # Daemon() # This might need to be async or run in executor if it blocks
 
+    print("DEBUG: Setting up logger")
     log = logging.getLogger()
     log.name = config.log_name
     handler = logging.FileHandler(config.log_file)
@@ -710,6 +704,7 @@ async def main():
     log.addHandler(handler)
 
     log.info("Starting %s..." % config.app_name)
+    print("DEBUG: Setting locale")
     try:
         locale.setlocale(locale.LC_ALL, 'en_US.utf8')
     except locale.Error as e_locale: # More specific exception
@@ -720,32 +715,44 @@ async def main():
             log.error(f"Could not set locale to en_US either: {e_locale_us}. Proceeding with default locale.")
     
     log.info("\tConnecting to MySQL...")
+    print("DEBUG: Connecting to database")
     db = database.Session()
     if not db:
         log.critical("Can't connect to DB!")
         exit(1)
+    print("DEBUG: Database session created")
 
     log.info("\tGrabbing track count from DB...")
+    print("DEBUG: Querying track count")
     trackCount = db.query(database.Event).filter_by(action='remix', success = True).count()
+    print(f"DEBUG: Track count is {trackCount}")
 
     log.info("\tClearing temp directories...")
+    print("DEBUG: Instantiating Cleanup")
     cleanup = Cleanup(log, None)
     cleanup.all() # Assuming synchronous
+    print("DEBUG: Cleanup.all() completed")
 
     log.info("\tInstantiating SoundCloud object...")
+    print("DEBUG: Instantiating SoundCloud")
     sc = SoundCloud(log) # Assuming synchronous
+    print("DEBUG: SoundCloud instantiated")
 
     log.info("\tLoading templates...")
+    print("DEBUG: Loading templates")
     templates = tornado.template.Loader("templates/")
     templates.autoescape = None
+    print("DEBUG: Templates loaded")
 
     log.info("\tCaching javascripts...")
+    print("DEBUG: Caching javascripts")
     javascripts = '\n'.join([
         open('./static/js/jquery.fileupload.js').read(),
         open('./static/js/front.js').read(),
         open('./static/js/player.js').read(),
     ])
     connectform = open('./static/js/connectform.js').read()
+    print("DEBUG: Javascripts cached")
     
     # Adjust resource paths for Socket.IO namespaces (remove /socket.io prefix if present)
     # Defaulting to ensure they start with a slash and have no 'socket.io' prefix.
@@ -756,14 +763,19 @@ async def main():
     clean_monitor_resource = '/' + raw_monitor_resource.split('socket.io/')[-1].lstrip('/')
 
     log.info(f"\tRegistering ProgressNamespace at: {clean_progress_resource}")
+    print("DEBUG: Registering ProgressNamespace")
     progress_ns = ProgressNamespace(clean_progress_resource, None, config) # r is not yet initialized
     sio.register_namespace(progress_ns)
+    print("DEBUG: ProgressNamespace registered")
     
     log.info(f"\tRegistering MonitorNamespace at: {clean_monitor_resource}")
+    print("DEBUG: Registering MonitorNamespace")
     monitor_ns = MonitorNamespace(clean_monitor_resource, MonitorHandler, config)
     sio.register_namespace(monitor_ns)
+    print("DEBUG: MonitorNamespace registered")
 
     log.info("\tStarting RemixQueue...")
+    print("DEBUG: Starting RemixQueue")
     # RemixQueue needs sio, progress_ns.listeners, and namespace paths
     r = RemixQueue(
         sio_instance=sio,
@@ -771,13 +783,16 @@ async def main():
         progress_namespace_path=clean_progress_resource,
         monitor_handler_class=MonitorHandler, # For calling MonitorHandler.track/overview if needed
         monitor_namespace_path=clean_monitor_resource,
+        logger=log,
         config_instance=config # Pass full config if RemixQueue needs other params
     )
     progress_ns.r = r # Give ProgressNamespace the initialized r
     cleanup.remixQueue = r
+    print("DEBUG: RemixQueue started")
 
 
     # Make sio available to Tornado handlers via application settings
+    print("DEBUG: Setting up application settings")
     application.settings['sio'] = sio
     application.settings['monitor_namespace_path'] = clean_monitor_resource
     application.settings['progress_namespace_path'] = clean_progress_resource
@@ -788,28 +803,35 @@ async def main():
     MonitorHandler.sio = sio 
     MonitorHandler.monitor_namespace_path = clean_monitor_resource
     MonitorHandler.application_settings = application.settings # for accessing sio if needed in instance methods
+    print("DEBUG: Application settings configured")
 
     log.info("\tStarting cleanup timers...")
+    print("DEBUG: Starting cleanup timers")
     # Tornado PeriodicCallback should work with asyncio if Tornado's IOLoop is asyncio-based
     fileCleanupTimer = tornado.ioloop.PeriodicCallback(cleanup.active, 1000 * config.cleanup_timeout)
     fileCleanupTimer.start()
     
     queueCleanupTimer = tornado.ioloop.PeriodicCallback(r.cleanup, 100 * min(config.watch_timeout, config.remix_timeout, config.wait_timeout))
     queueCleanupTimer.start()
+    print("DEBUG: Cleanup timers started")
 
     log.info("\tStarting Server with Socket.IO...")
+    print("DEBUG: Starting Tornado server")
     server_port = config.socket_io_port if hasattr(config, 'socket_io_port') else 8888
     
-    # Use Tornado to serve the ASGI app (sio_app which includes the Tornado app)
-    http_server = tornado.httpserver.HTTPServer(sio_app)
-    http_server.listen(server_port)
+    application.listen(server_port)
     log.info(f"Tornado server with Socket.IO running on port {server_port}")
-    await asyncio.Event().wait() # Keep alive
+    print("DEBUG: Server is listening")
 
 if __name__ == "__main__":
+    # In Tornado 6, the server runs on the current IOLoop, which is asyncio's loop by default.
+    # We can start the main async function and then start the IOLoop.
+    # This is a more explicit way to run the server indefinitely.
+    asyncio.get_event_loop().run_until_complete(main())
     try:
-        asyncio.run(main())
+        tornado.ioloop.IOLoop.current().start()
     except KeyboardInterrupt:
+        tornado.ioloop.IOLoop.current().stop()
         log.info("Server shutting down by KeyboardInterrupt...")
     except Exception as e:
         log.critical(f"Unhandled exception in main: {e}\n{traceback.format_exc()}")

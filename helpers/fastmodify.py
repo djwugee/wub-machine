@@ -1,7 +1,7 @@
 """
 fastmodify.py
 
-Provides similar functionality to echonest.Modify, but faster and lighter.
+Provides functionality for audio modification.
 Requires soundstretch command-line binary to be installed.
 
 Based on code by Ben Lacker on 2009-06-12.

@@ -73,7 +73,6 @@ if [[ $platform == 'linux' ]]; then
 
     # FFMpeg is a dependency for Librosa and general audio processing
     apt-get install ffmpeg
-    # Echonest specific symlink and install removed
 
     # Command-line programs used to speed up remixing
     apt-get install lame soundstretch shntool
@@ -111,7 +110,6 @@ else
 
     # FFMpeg is a dependency for Librosa and general audio processing
     hash ffmpeg 2>&- || brew install ffmpeg
-    # Echonest specific symlink and install removed
 
     # Command-line programs used to speed up remixing
     brew install lame
