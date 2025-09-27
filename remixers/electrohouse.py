@@ -378,11 +378,16 @@ class ElectroHouse(Remixer):
                 segment_audio_mono = librosa.to_mono(segment_audio)
 
                 if segment_audio_mono.size > 0:
-                    chromagram = librosa.feature.chroma_stft(y=segment_audio_mono, sr=self.sr)
-                    segment_chroma_energies = np.sum(chromagram, axis=1)
-                    dominant_pitch_class_in_segment = np.argmax(segment_chroma_energies)
+                    n_fft = 2048
+                    if segment_audio_mono.size < n_fft:
+                        n_fft = 2**(segment_audio_mono.size.bit_length() - 1)
                     
-                    if dominant_pitch_class_in_segment == pitch_class:
+                    if n_fft > 0:
+                        chromagram = librosa.feature.chroma_stft(y=segment_audio_mono, sr=self.sr, n_fft=n_fft)
+                        segment_chroma_energies = np.sum(chromagram, axis=1)
+                        dominant_pitch_class_in_segment = np.argmax(segment_chroma_energies).item()
+
+                        if dominant_pitch_class_in_segment == pitch_class:
                         matching_segments_times.append((elem_start_time, elem_end_time))
         
         self.sampleCache[cache_key] = matching_segments_times
@@ -617,8 +622,18 @@ class ElectroHouse(Remixer):
                 self.bar_times.append((bar_start_time, bar_end_time))
 
         # Tonic (Key)
-        chromagram = librosa.feature.chroma_stft(y=y_mono_for_analysis, sr=self.sr)
-        self.tonic = np.argmax(np.sum(chromagram, axis=1))
+        if y_mono_for_analysis.size > 0:
+            n_fft = 2048
+            if y_mono_for_analysis.size < n_fft:
+                n_fft = 2**(y_mono_for_analysis.size.bit_length() - 1)
+
+            if n_fft > 0:
+                chromagram = librosa.feature.chroma_stft(y=y_mono_for_analysis, sr=self.sr, n_fft=n_fft)
+                self.tonic = np.argmax(np.sum(chromagram, axis=1)).item()
+            else:
+                self.tonic = 0 # Default to C if track is too short for any FFT
+        else:
+            self.tonic = 0 # Default to C if track is empty
 
         self.tag['key'] = self.keys[self.tonic % 12] # Ensure self.keys is accessible
         # Special case from original code for "I Wish" - adjust tonic

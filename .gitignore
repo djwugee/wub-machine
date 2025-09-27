@@ -1,0 +1,15 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.pyc
+
+# Temporary files and uploads
+tmp/
+uploads/
+
+# Log files
+*.log
+log.txt
+
+# IDE settings
+.vscode/
+.idea/

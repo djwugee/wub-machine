@@ -599,9 +599,15 @@ class Dubstep(Remixer):
             if start_sample < end_sample and end_sample <= self.y.shape[1]: # Ensure valid slice
                 segment_y_mono = librosa.to_mono(self.y[..., start_sample:end_sample])
                 if segment_y_mono.size > 0:
-                    chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr)
-                    dom_pitch = np.argmax(np.sum(chroma, axis=1))
-                    self.beat_pitch_data.append((start_t, end_t, dom_pitch))
+                    n_fft = 2048
+                    if segment_y_mono.size < n_fft:
+                        n_fft = 2**(segment_y_mono.size.bit_length() - 1)
+
+                    # n_fft must be positive for chroma_stft
+                    if n_fft > 0:
+                        chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr, n_fft=n_fft)
+                        dom_pitch = np.argmax(np.sum(chroma, axis=1)).item()
+                        self.beat_pitch_data.append((start_t, end_t, dom_pitch))
         
         self.bar_pitch_data = []
         for start_t, end_t in self.bar_times:
@@ -610,14 +616,30 @@ class Dubstep(Remixer):
             if start_sample < end_sample and end_sample <= self.y.shape[1]: # Ensure valid slice
                 segment_y_mono = librosa.to_mono(self.y[..., start_sample:end_sample])
                 if segment_y_mono.size > 0:
-                    chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr)
-                    dom_pitch = np.argmax(np.sum(chroma, axis=1))
-                    self.bar_pitch_data.append((start_t, end_t, dom_pitch))
+                    n_fft = 2048
+                    if segment_y_mono.size < n_fft:
+                        n_fft = 2**(segment_y_mono.size.bit_length() - 1)
+
+                    # n_fft must be positive for chroma_stft
+                    if n_fft > 0:
+                        chroma = librosa.feature.chroma_stft(y=segment_y_mono, sr=self.sr, n_fft=n_fft)
+                        dom_pitch = np.argmax(np.sum(chroma, axis=1)).item()
+                        self.bar_pitch_data.append((start_t, end_t, dom_pitch))
 
         # Tonic (Key) - Overall key for the track
-        chromagram = librosa.feature.chroma_stft(y=y_mono, sr=self.sr) # Use full mono track for overall key
-        chroma_energies = np.sum(chromagram, axis=1)
-        self.tonic = np.argmax(chroma_energies)
+        if y_mono.size > 0:
+            n_fft = 2048
+            if y_mono.size < n_fft:
+                n_fft = 2**(y_mono.size.bit_length() - 1)
+
+            if n_fft > 0:
+                chromagram = librosa.feature.chroma_stft(y=y_mono, sr=self.sr, n_fft=n_fft)
+                chroma_energies = np.sum(chromagram, axis=1)
+                self.tonic = np.argmax(chroma_energies).item()
+            else:
+                self.tonic = 0 # Default to C if track is too short for any FFT
+        else:
+            self.tonic = 0 # Default to C if track is empty
 
         self.tag['key'] = self.keys[self.tonic] if self.tonic >= 0 and self.tonic < 12 else '?'
         self.tag['tempo'] = self.template['tempo'] 
