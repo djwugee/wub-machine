@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wub Machine - Worker Test Harness</title>
+    <style>
+        body { font-family: sans-serif; }
+        #log { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
+    </style>
+</head>
+<body>
+    <h1>Wub Machine - Worker Test Harness</h1>
+    <input type="file" id="file-input" accept="audio/*" />
+    <select id="style-select">
+        <option value="Dubstep">Dubstep</option>
+        <option value="ElectroHouse">Electro House</option>
+        <option value="Beatbox">Beatbox</option>
+        <option value="DoubleTime">Double Time</option>
+        <option value="Blank">Blank</option>
+    </select>
+    <button id="start-button">Start Remix</button>
+    <hr>
+    <h2>Log</h2>
+    <div id="log"></div>
+    <hr>
+    <h2>Result</h2>
+    <div id="player-container"></div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const styleSelect = document.getElementById('style-select');
+        const startButton = document.getElementById('start-button');
+        const log = document.getElementById('log');
+        const playerContainer = document.getElementById('player-container');
+
+        let worker;
+
+        function logMessage(message) {
+            log.innerHTML += `<div>${message}</div>`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        startButton.addEventListener('click', () => {
+            const file = fileInput.files[0];
+            const style = styleSelect.value;
+            if (!file) {
+                logMessage('Please select a file.');
+                return;
+            }
+
+            if (worker) worker.terminate();
+            worker = new Worker('/static/js/worker.js');
+
+            worker.onmessage = (e) => {
+                const { type, payload } = e.data;
+                if (type === 'progress') {
+                    logMessage(`Progress: ${payload.text} (${(payload.progress * 100).toFixed(1)}%)`);
+                } else if (type === 'result') {
+                    logMessage('Remix complete!');
+                    const audioBlob = payload;
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = new Audio(audioUrl);
+                    audio.controls = true;
+                    playerContainer.innerHTML = '';
+                    playerContainer.appendChild(audio);
+                    worker.terminate();
+                }
+            };
+
+            worker.onerror = (err) => {
+                logMessage(`Error: ${err.message}`);
+                worker.terminate();
+            };
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const audioData = e.target.result;
+                logMessage('Starting remix...');
+                worker.postMessage({
+                    type: 'start',
+                    payload: {
+                        audioData,
+                        style: style,
+                        samples_path: '/samples/'
+                    }
+                }, [audioData]);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+    </script>
+</body>
+</html>
