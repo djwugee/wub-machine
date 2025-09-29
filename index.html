@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Wub Machine JS</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+    <div id="app">
+        <h1>The Wub Machine</h1>
+        <p>Remix your music in the browser.</p>
+
+        <div class="upload-section">
+            <input type="file" id="file-input" accept="audio/*">
+            <select id="remix-style">
+                <!-- Remix options will be populated here -->
+            </select>
+            <button id="remix-button">Remix!</button>
+        </div>
+
+        <div class="progress-section">
+            <h2>Progress</h2>
+            <p id="progress-text">Waiting for a file...</p>
+            <progress id="progress-bar" value="0" max="100"></progress>
+        </div>
+
+        <div class="download-section">
+            <h2>Download</h2>
+            <a id="download-link" style="display:none;"></a>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
