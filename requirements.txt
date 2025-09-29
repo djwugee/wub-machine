@@ -5,5 +5,3 @@ librosa
 soundfile
 pyyaml
 sqlalchemy
-soundstretch
-lame

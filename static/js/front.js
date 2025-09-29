@@ -18,7 +18,11 @@
     window.beforeUpload = function(callback) {
       $(".progress").slideUp();
       return $("#file-uploader").slideUp(function() {
-        $("#content").prepend("<div class='newlabel'></div><a href='#' class='style' id='style_Dubstep'>Dubstep</a><a href='#' class='style right' id='style_ElectroHouse'>Electro House</div>");
+        var remixerButtons = "<div class='newlabel'></div>";
+        $.each(window.wubconfig.remixers, function(name, displayName) {
+            remixerButtons += "<a href='#' class='style' id='style_" + name + "'>" + displayName + "</a>";
+        });
+        $("#content").prepend(remixerButtons);
         $(".newlabel").fadeIn('slow');
         return $(".style").click(function() {
           $(".newlabel").fadeOut('slow');

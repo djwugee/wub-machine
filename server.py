@@ -8,7 +8,7 @@ __author__ = "Peter Sobot"
 __copyright__ = "Copyright (C) 2011 Peter Sobot"
 __version__ = "2.2"
 
-import json, time, locale, traceback, gc, logging, os, database, urllib.parse, sys
+import json, time, locale, traceback, gc, logging, os, database, urllib.parse, sys, re
 import tornado.ioloop, tornado.web, tornado.template, tornado.httpclient, tornado.escape, tornado.websocket
 import socketio
 import asyncio
@@ -26,9 +26,15 @@ from helpers.web import *
 # Kinds of remixers.
 from remixers.dubstep import Dubstep
 from remixers.electrohouse import ElectroHouse
+from remixers.beatbox import Beatbox
+from remixers.blank import Blank
+from remixers.doubletime import DoubleTime
 remixers = {
   'Dubstep': Dubstep,
-  'ElectroHouse': ElectroHouse
+  'ElectroHouse': ElectroHouse,
+  'Beatbox': Beatbox,
+  'Blank': Blank,
+  'DoubleTime': DoubleTime
 }
 
 # Check dependencies...
@@ -53,7 +59,11 @@ else:
 
 class MainHandler(RequestHandler):
     def get(self):
-        js = ("window.wubconfig = %s;" % json.dumps(config.javascript)) + javascripts
+        js_config = config.javascript
+        js_config['remixers'] = {
+            name: " ".join(re.findall('[A-Z][^A-Z]*', name)) for name in remixers.keys()
+        }
+        js = ("window.wubconfig = %s;" % json.dumps(js_config)) + javascripts
         kwargs = {
             "isOpen": r.isAccepting(),
             "track": sc.frontPageTrack(),
