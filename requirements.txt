@@ -3,5 +3,10 @@ mutagen
 Pillow
 librosa
 soundfile
-pyyaml
-sqlalchemy
+PyYAML
+SQLAlchemy
+tornado
+python-socketio
+PyMySQL
+greenlet
+Werkzeug>=2.0

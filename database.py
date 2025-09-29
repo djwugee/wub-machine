@@ -101,7 +101,7 @@ from sqlalchemy.engine import url
 from sqlalchemy import text
 u = url.make_url(config.database_connect_string)
 server_engine = create_engine(
-    f"mysql+mysqldb://{u.username}:{u.password}@{u.host}:{u.port or 3306}",
+    f"mysql+pymysql://{u.username}:{u.password}@{u.host}:{u.port or 3306}",
     pool_recycle=10
 )
 with server_engine.connect() as conn:

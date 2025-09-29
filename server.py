@@ -18,7 +18,6 @@ from hashlib import md5
 
 # Wubmachine-specific libraries
 from helpers.remixqueue import RemixQueue # RemixQueue is now async-heavy
-from helpers.soundcloud import SoundCloud
 from helpers.cleanup import Cleanup
 from helpers.daemon import Daemon
 from helpers.web import *
@@ -66,12 +65,10 @@ class MainHandler(RequestHandler):
         js = ("window.wubconfig = %s;" % json.dumps(js_config)) + javascripts
         kwargs = {
             "isOpen": r.isAccepting(),
-            "track": sc.frontPageTrack(),
             "isErroring": r.errorRateExceeded(),
             'count': locale.format_string("%d", trackCount, grouping=True),
             'cleanup_timeout': time_in_words(config.cleanup_timeout),
             'javascript': js,
-            'connectform': connectform
         }
         self.write(templates.load('index.html').generate(**kwargs))
     def head(self):
@@ -177,7 +174,7 @@ class MonitorNamespace(socketio.AsyncNamespace):
     # using the `sio` instance directly.
 
 class MonitorHandler(RequestHandler):
-    keys = ['upload', 'download', 'remixTrue', 'remixFalse', 'shareTrue', 'shareFalse']
+    keys = ['upload', 'download', 'remixTrue', 'remixFalse']
 
     async def get(self, sub=None, uid=None):
         if sub:
@@ -219,7 +216,7 @@ class MonitorHandler(RequestHandler):
             for a in d:
                 if a.action == 'upload' or a.action == 'download':
                     n[a.action] = int(a.__dict__['count(*)'])
-                elif a.action == 'remix' or a.action == 'share':
+                elif a.action == 'remix':
                     n["%s%s" % (a.action, a.success)] = int(a.__dict__['count(*)'])
             return n
         except Exception as e_hist:
@@ -254,15 +251,6 @@ class MonitorHandler(RequestHandler):
         running = [v for k, v in r.remixers.items() if k in r.running]
         return templates.load('current.html').generate(c=running)
 
-    def shared(self):
-        db = database.Session()
-        try:
-            d = db.query(database.Event).filter_by(action = "sharing", success = True).group_by(database.Event.uid).order_by(database.Event.id.desc()).limit(6).all()
-        except Exception as e_shared:
-            log.error(f"DB read exception in shared: {e_shared}\n{traceback.format_exc()}")
-            d = [] # Ensure d is defined
-        return templates.load('shared.html').generate(tracks=d)
-
     @classmethod
     def track(self, track):
         db = database.Session()
@@ -292,7 +280,7 @@ class MonitorHandler(RequestHandler):
             else:
                 track = tracks[0]
 
-        for stat in ['upload', 'remix', 'share', 'download']:
+        for stat in ['upload', 'remix', 'download']:
             track.__setattr__(stat, None)
         
         events = {}
@@ -300,15 +288,12 @@ class MonitorHandler(RequestHandler):
             events[event.action] = event
         track.upload = events.get('upload')
         track.remix = events.get('remix')
-        track.share = events.get('share')
         track.download = events.get('download')
-        track.running = track.uid in r.running or (track.share and track.share.start and not track.share.end and track.share.success is None)
-        track.failed = (track.remix and track.remix.success == False) or (track.share and track.share.success == False)
+        track.running = track.uid in r.running
+        track.failed = (track.remix and track.remix.success == False)
         if track.failed:
             if track.remix.success is False:
                 track.failure = track.remix.detail 
-            elif track.share.detail is not None:
-                track.failure = track.share.detail
             else:
                 track.failure = ''
         try:
@@ -368,7 +353,7 @@ class MonitorHandler(RequestHandler):
                 for daya in dayr:
                     if daya.action == 'download':
                         n[daya.action] = [timestamp , int(daya.__dict__['count(*)'])]
-                    elif daya.action == 'remix' or daya.action == 'share':
+                    elif daya.action == 'remix':
                         n["%s%s" % (daya.action, daya.success)] = [timestamp, int(daya.__dict__['count(*)'])]
 
                 for k in self.keys:
@@ -382,119 +367,6 @@ class MonitorHandler(RequestHandler):
                 log.error(f"DB read exception in graph inner loop, rolling back: {e_graph_inner}\n{traceback.format_exc()}")
                 db.rollback()
         return history
-
-class ShareHandler(RequestHandler):
-    async def get(self, uid):
-        self.uid = uid
-        try:
-            token = str(self.get_argument('token'))
-            timeout = config.soundcloud_timeout
-            self.event = database.Event(uid, "share", ip = self.request.remote_ip) 
-
-            if not uid in r.finished:
-                raise tornado.web.HTTPError(404)
-
-            t = r.finished[uid]['tag']
-
-            description = config.soundcloud_description
-            if 'artist' in t and 'album' in t and t['artist'].strip() != '' and t['album'].strip() != '':
-                description = ("Original song by %s, from the album \"%s\".<br />" % (t['artist'].strip(), t['album'].strip())) + description
-            elif 'artist' in t and t['artist'].strip() != '':
-                description = ("Original song by %s.<br />" % t['artist'].strip()) + description
-
-            form = MultiPartForm()
-            form.add_field('oauth_token', token)
-            form.add_field('track[title]', t['new_title'].encode('utf-8'))
-            form.add_field('track[genre]', t['style'])
-            form.add_field('track[license]', "no-rights-reserved")
-            form.add_field('track[tag_list]', ' '.join(['"%s"' % tag for tag in config.soundcloud_tag_list]))
-            form.add_field('track[description]', description.encode('utf-8'))
-            form.add_field('track[track_type]', 'remix')
-            form.add_field('track[downloadable]', 'true')
-            form.add_field('track[sharing_note]', config.soundcloud_sharing_note)
-            form.add_file('track[asset_data]', '%s.mp3' % uid, open(t['remixed']))
-
-            if 'tempo' in t:
-                form.add_field('track[bpm]', t['tempo'])
-            if 'art' in t:
-                form.add_file('track[artwork_data]', '%s.png' % uid, open(t['art']))
-            if 'key' in t:
-                form.add_field('track[key_signature]', t['key'])
-
-            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
-            # Ensure emit_monitor_updates is called correctly
-            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
-                asyncio.create_task(self.emit_monitor_updates(self.uid))
-            else:
-                log.error("ShareHandler: emit_monitor_updates method not found or not callable.")
-
-
-            self.ht = tornado.httpclient.AsyncHTTPClient()
-            response = await self.ht.fetch(
-                "https://api.soundcloud.com/tracks.json",
-                method = 'POST',
-                headers = {"Content-Type": form.get_content_type()},
-                body = str(form),
-                request_timeout = timeout,
-                connect_timeout = timeout
-            )
-
-            self.write(response.body)
-            r_data = json.loads(response.body) # Renamed to avoid conflict with global 'r'
-            try:
-                db = database.Session()
-                self.event = db.merge(self.event) # Ensure self.event was created in get()
-                self.event.success = True
-                self.event.end = datetime.now()
-                self.event.detail = r_data['permalink_url'].encode('ascii', 'ignore')
-                db.commit()
-            except Exception as e_db_share_get:
-                log.error(f"DB exception after SoundCloud share for UID {self.uid}, rolling back: {e_db_share_get}\n{traceback.format_exc()}")
-                db.rollback()
-            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
-            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
-                asyncio.create_task(self.emit_monitor_updates(self.uid))
-            else:
-                log.error("ShareHandler: emit_monitor_updates method not found or not callable after SC fetch.")
-            sc.fetchTracks()
-        except Exception as e_share_get:
-            self.write({ 'error': traceback.format_exc().splitlines()[-1] })
-            self.event.success = False
-            self.event.end = datetime.now()
-            self.event.detail = traceback.format_exc()
-            log.error(f"Exception in ShareHandler.get for UID {self.uid}: {e_share_get}\n{self.event.detail}")
-            # MonitorSocket.update(self.uid) -> Will be replaced by sio.emit
-            if hasattr(self, 'emit_monitor_updates') and callable(self.emit_monitor_updates):
-                asyncio.create_task(self.emit_monitor_updates(self.uid))
-            else:
-                log.error("ShareHandler: emit_monitor_updates method not found or not callable on error path.")
-        finally:
-            db = database.Session()
-            try:
-                db.add(self.event)
-                db.commit()
-            except Exception as e_db_share_event:
-                log.error(f"DB exception saving share event for UID {self.uid}, rolling back: {e_db_share_event}\n{traceback.format_exc()}")
-                db.rollback()
-
-    async def emit_monitor_updates(self, uid):
-        # Ensure sio and paths are available
-        sio_instance = self.application.settings.get('sio')
-        monitor_namespace = self.application.settings.get('monitor_namespace_path')
-        if sio_instance and monitor_namespace:
-            try:
-                # MonitorHandler.track and .overview are classmethods, call them on the class
-                # Run potentially blocking calls in a thread
-                track_html = await asyncio.to_thread(MonitorHandler.track, uid)
-                overview_html = await asyncio.to_thread(MonitorHandler.overview)
-                
-                await sio_instance.emit('monitor_track_update', track_html, namespace=monitor_namespace)
-                await sio_instance.emit('monitor_overview_update', overview_html, namespace=monitor_namespace)
-            except Exception as e:
-                log.error(f"ShareHandler: Error emitting monitor updates for UID {uid}: {e}")
-        else:
-            log.error(f"ShareHandler: SIO instance or monitor_namespace_path not found in application settings for UID {uid}.")
-
 
 class DownloadHandler(RequestHandler):
     async def get(self, uid): # Made async
@@ -691,7 +563,6 @@ tornado_handlers = [
     (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": "static/"}),
     (r"/monitor[/]?([^/]+)?[/]?(.*)", MonitorHandler),
     (r"/upload", UploadHandler),
-    (r"/share/(%s)" % config.uid_re, ShareHandler),
     (r"/download/(%s)" % config.uid_re, DownloadHandler),
     (r"/", MainHandler),
 ]
@@ -701,7 +572,7 @@ application = tornado.web.Application(tornado_handlers)
 
 async def main():
     print("DEBUG: main() started")
-    global log, r, sc, templates, javascripts, connectform, trackCount # Ensure these are accessible if needed by main logic
+    global log, r, templates, javascripts, trackCount # Ensure these are accessible if needed by main logic
 
     # Daemon() # This might need to be async or run in executor if it blocks
 
@@ -743,11 +614,6 @@ async def main():
     cleanup.all() # Assuming synchronous
     print("DEBUG: Cleanup.all() completed")
 
-    log.info("\tInstantiating SoundCloud object...")
-    print("DEBUG: Instantiating SoundCloud")
-    sc = SoundCloud(log) # Assuming synchronous
-    print("DEBUG: SoundCloud instantiated")
-
     log.info("\tLoading templates...")
     print("DEBUG: Loading templates")
     templates = tornado.template.Loader("templates/")
@@ -761,7 +627,6 @@ async def main():
         open('./static/js/front.js').read(),
         open('./static/js/player.js').read(),
     ])
-    connectform = open('./static/js/connectform.js').read()
     print("DEBUG: Javascripts cached")
     
     # Adjust resource paths for Socket.IO namespaces (remove /socket.io prefix if present)
@@ -852,4 +717,3 @@ if __name__ == "__main__":
         if os.path.exists('server.py.pid'): # Assuming Daemon sets this
             os.remove('server.py.pid')
         sys.exit(0)
-
