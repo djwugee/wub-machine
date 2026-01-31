@@ -11,9 +11,6 @@ const nextConfig = {
     unoptimized: true,
   },
   
-  // Enable React Compiler
-  reactCompiler: true,
-  
   // Webpack configuration for audio processing
   webpack: (config) => {
     config.resolve.fallback = {
