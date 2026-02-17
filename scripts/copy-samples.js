@@ -1,15 +1,16 @@
 import { cpSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { join } from 'path'
 
-// Copy samples from samples/ to public/samples/
+const BASE = '/vercel/share/v0-project'
 const dirs = ['samples/dubstep', 'samples/electrohouse']
 
 for (const dir of dirs) {
-  const dest = `public/${dir}`
+  const src = join(BASE, dir)
+  const dest = join(BASE, 'public', dir)
   try {
-    mkdirSync(dirname(dest), { recursive: true })
-    cpSync(dir, dest, { recursive: true })
-    console.log(`Copied ${dir} -> ${dest}`)
+    mkdirSync(dest, { recursive: true })
+    cpSync(src, dest, { recursive: true })
+    console.log(`Copied ${src} -> ${dest}`)
   } catch (e) {
     console.error(`Error copying ${dir}:`, e.message)
   }
