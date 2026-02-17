@@ -9,8 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { AudioEngine, AudioAnalysisData } from '@/lib/audio/audio-engine';
-import { DubstepRemixer } from '@/lib/audio/dubstep-remixer';
-import { ElectroHouseRemixer } from '@/lib/audio/electrohouse-remixer';
+import { DubstepRemixerOriginal } from '@/lib/audio/dubstep-original';
+import { ElectroHouseRemixerOriginal } from '@/lib/audio/electrohouse-original';
 import { RemixProgress } from '@/lib/audio/remix-base';
 import { Music, Sparkles, Info } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -100,7 +100,7 @@ export default function HomePage() {
       let remixed: AudioBuffer;
 
       if (remixSettings.style === 'dubstep') {
-        const remixer = new DubstepRemixer(
+        const remixer = new DubstepRemixerOriginal(
           audioContext,
           originalBuffer,
           analysisData,
@@ -113,7 +113,7 @@ export default function HomePage() {
         );
         remixed = await remixer.remix();
       } else {
-        const remixer = new ElectroHouseRemixer(
+        const remixer = new ElectroHouseRemixerOriginal(
           audioContext,
           originalBuffer,
           analysisData,
