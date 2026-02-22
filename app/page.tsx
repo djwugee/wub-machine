@@ -9,9 +9,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { AudioEngine, AudioAnalysisData } from '@/lib/audio/audio-engine';
-import { DubstepRemixerOriginal } from '@/lib/audio/dubstep-original';
-import { ElectroHouseRemixerOriginal } from '@/lib/audio/electrohouse-original';
-import { RemixProgress } from '@/lib/audio/remix-base';
+import { DubstepRemixerPorted } from '@/lib/audio/remixer-dubstep-ported';
+import { ElectroHouseRemixerPorted } from '@/lib/audio/remixer-electrohouse-ported';
+import type { RemixProgress } from '@/lib/audio/remixer-dubstep-ported';
 import { Music, Sparkles, Info } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
@@ -100,28 +100,18 @@ export default function HomePage() {
       let remixed: AudioBuffer;
 
       if (remixSettings.style === 'dubstep') {
-        const remixer = new DubstepRemixerOriginal(
+        const remixer = new DubstepRemixerPorted(
           audioContext,
           originalBuffer,
           analysisData,
-          {
-            intensity: remixSettings.intensity,
-            preserveVocals: remixSettings.preserveVocals,
-            additionalEffects: remixSettings.additionalEffects,
-          },
           progressCallback
         );
         remixed = await remixer.remix();
       } else {
-        const remixer = new ElectroHouseRemixerOriginal(
+        const remixer = new ElectroHouseRemixerPorted(
           audioContext,
           originalBuffer,
           analysisData,
-          {
-            intensity: remixSettings.intensity,
-            preserveVocals: remixSettings.preserveVocals,
-            additionalEffects: remixSettings.additionalEffects,
-          },
           progressCallback
         );
         remixed = await remixer.remix();
