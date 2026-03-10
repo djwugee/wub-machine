@@ -32,32 +32,33 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/5">
+    <div className="min-h-screen bg-background">
       {/* Hero Section */}
-      <section className="relative overflow-hidden px-4 py-12 sm:py-16 lg:py-20">
+      <section className="relative overflow-hidden px-4 py-16 sm:py-20 lg:py-28">
+        <div className="absolute inset-0 -z-10 bg-gradient-to-b from-primary/10 via-transparent to-transparent opacity-30" />
         <div className="mx-auto max-w-4xl">
-          <div className="text-center">
-            <h1 className="text-balance text-5xl font-bold tracking-tight text-foreground sm:text-6xl lg:text-7xl">
+          <div className="text-center animate-fade-in">
+            <h1 className="text-balance bg-clip-text text-foreground">
               Wub Machine
             </h1>
-            <p className="mt-4 text-balance text-lg text-muted-foreground sm:text-xl">
-              Transform your music into electronic remixes with AI-powered beat
-              detection and synthesis.
+            <p className="mt-6 text-balance text-lg text-muted-foreground sm:text-xl leading-relaxed">
+              Transform your music into electronic remixes with real-time beat
+              detection and professional-grade audio synthesis.
             </p>
           </div>
         </div>
       </section>
 
       {/* Main Content */}
-      <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="mx-auto max-w-5xl px-4 py-12 animate-slide-in">
         {!results ? (
           <>
             {/* Remixer Selection */}
-            <section className="mb-12">
-              <h2 className="mb-6 text-2xl font-semibold text-foreground">
+            <section className="mb-16">
+              <h2 className="mb-8 text-3xl font-bold text-foreground">
                 Choose Your Remix Style
               </h2>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-6 sm:grid-cols-2">
                 <RemixerCard
                   title="Dubstep"
                   description="140 BPM wobble bass remix with pulsing wubs and aggressive breakdowns"
@@ -79,8 +80,8 @@ export default function HomePage() {
 
             {/* Upload Zone */}
             {selectedRemixer && (
-              <section className="mb-12">
-                <h2 className="mb-6 text-2xl font-semibold text-foreground">
+              <section className="mb-16 animate-slide-in">
+                <h2 className="mb-8 text-3xl font-bold text-foreground">
                   Upload Your Track
                 </h2>
                 <UploadZone
@@ -93,37 +94,45 @@ export default function HomePage() {
 
             {/* Progress Indicator */}
             {isProcessing && (
-              <section className="mb-12">
+              <section className="mb-16 animate-slide-in">
                 <ProgressIndicator progress={progress} />
               </section>
             )}
 
             {/* Empty State */}
             {!selectedRemixer && (
-              <div className="rounded-lg border border-dashed border-border bg-muted/30 px-8 py-12 text-center">
-                <p className="text-muted-foreground">
+              <div className="card flex flex-col items-center justify-center rounded-xl px-8 py-16 text-center">
+                <div className="mb-4 text-5xl opacity-50">🎵</div>
+                <p className="text-lg text-muted-foreground">
                   Select a remix style to get started
                 </p>
               </div>
             )}
           </>
         ) : (
-          <RemixResults onReset={handleReset} />
+          <div className="animate-fade-in">
+            <RemixResults onReset={handleReset} />
+          </div>
         )}
       </div>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-muted/30 py-8">
+      <footer className="border-t border-border/50 bg-muted/20 py-12 mt-20">
         <div className="mx-auto max-w-5xl px-4 text-center text-sm text-muted-foreground">
-          <p>
-            Wub Machine © 2024 | Built with Next.js and Web Audio API | Original
-            by{' '}
-            <a
-              href="https://github.com/psobot/wub-machine"
-              className="text-primary hover:underline"
-            >
-              Peter Sobot
-            </a>
+          <p className="flex items-center justify-center gap-2">
+            <span>Wub Machine © 2024</span>
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/50" />
+            <span>Built with Next.js and Web Audio API</span>
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/50" />
+            <span>
+              Original by{' '}
+              <a
+                href="https://github.com/psobot/wub-machine"
+                className="text-primary hover:text-primary/80 hover:underline transition-colors"
+              >
+                Peter Sobot
+              </a>
+            </span>
           </p>
         </div>
       </footer>

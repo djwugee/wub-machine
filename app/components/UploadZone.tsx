@@ -84,18 +84,21 @@ export default function UploadZone({
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`group relative rounded-2xl border-2 border-dashed transition-all duration-300 ${
+        className={`group relative rounded-xl border-2 border-dashed transition-all duration-300 overflow-hidden ${
           isDragging
-            ? 'border-primary bg-primary/10'
+            ? 'border-primary bg-primary/15 shadow-lg shadow-primary/20'
             : selectedFile
-              ? 'border-primary bg-primary/5'
-              : 'border-border bg-muted/30 hover:border-primary/50 hover:bg-primary/5'
+              ? 'border-primary/60 bg-primary/5'
+              : 'border-border/60 bg-muted/20 hover:border-primary/50 hover:bg-primary/5'
         }`}
       >
+        {/* Animated background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={isProcessing}
-          className="w-full px-8 py-12 text-center transition-opacity disabled:opacity-50"
+          className="relative w-full px-6 sm:px-8 py-12 sm:py-16 text-center transition-opacity disabled:opacity-50 cursor-pointer"
         >
           <input
             ref={fileInputRef}
@@ -108,37 +111,37 @@ export default function UploadZone({
           />
 
           {selectedFile ? (
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-3xl">🎵</span>
+            <div className="flex flex-col items-center gap-3 animate-fade-in">
+              <span className="text-5xl sm:text-6xl">🎵</span>
               <div>
-                <p className="font-semibold text-foreground">
+                <p className="font-semibold text-foreground text-lg break-all">
                   {selectedFile.name}
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground mt-1">
                   {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
                 </p>
               </div>
               {!isProcessing && (
-                <p className="text-xs text-muted-foreground">
-                  Click to change file
+                <p className="text-xs text-muted-foreground/70 mt-2">
+                  Click to select different file
                 </p>
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-4xl transition-transform group-hover:scale-110">
+            <div className="flex flex-col items-center gap-4">
+              <span className="text-5xl sm:text-6xl transition-transform duration-300 group-hover:scale-110 group-hover:drop-shadow-lg">
                 📤
               </span>
-              <div>
-                <p className="font-semibold text-foreground">
+              <div className="max-w-xs">
+                <p className="font-semibold text-lg text-foreground">
                   Drop your audio file here
                 </p>
-                <p className="text-sm text-muted-foreground">
-                  or click to browse
+                <p className="text-sm text-muted-foreground mt-2">
+                  or click to browse your library
                 </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                MP3, WAV, OGG, or FLAC up to 100MB
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                MP3, WAV, OGG, or FLAC • up to 100MB
               </p>
             </div>
           )}
@@ -146,8 +149,8 @@ export default function UploadZone({
       </div>
 
       {error && (
-        <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
-          <p className="text-sm text-destructive">{error}</p>
+        <div className="mt-4 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 animate-slide-in">
+          <p className="text-sm text-destructive font-medium">{error}</p>
         </div>
       )}
 
@@ -176,7 +179,7 @@ export default function UploadZone({
               })
             }
           }}
-          className="mt-4 w-full rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-95"
+          className="btn-primary mt-6 w-full py-3 sm:py-4 text-base font-semibold animate-slide-in"
         >
           Start Remix
         </button>
