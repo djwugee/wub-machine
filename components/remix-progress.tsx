@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { RemixProgress } from "@/lib/audio-engine";
-import { Loader2, Music, Waveform, Download, AlertCircle } from "lucide-react";
+import { Loader2, Music, Waves, Download, AlertCircle } from "lucide-react";
 
 interface RemixProgressDisplayProps {
   progress: RemixProgress;
@@ -10,7 +10,7 @@ interface RemixProgressDisplayProps {
 }
 
 const STATUS_ICONS = {
-  analyzing: Waveform,
+  analyzing: Waves,
   remixing: Music,
   encoding: Download,
   complete: Music,
