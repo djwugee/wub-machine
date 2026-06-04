@@ -1,59 +1,80 @@
-'use client';
+"use client"
 
-import { Music2, Zap } from 'lucide-react';
-import type { RemixStyle } from '@/types';
+import { Waves, Zap } from "lucide-react"
+import type { RemixStyle } from "@/lib/audio/engine"
 
 interface RemixStyleSelectorProps {
-  selectedStyle: RemixStyle;
-  onStyleChange: (style: RemixStyle) => void;
-  disabled?: boolean;
+  selectedStyle: RemixStyle
+  onStyleChange: (style: RemixStyle) => void
+  disabled?: boolean
 }
 
-export default function RemixStyleSelector({
-  selectedStyle,
-  onStyleChange,
-  disabled,
-}: RemixStyleSelectorProps) {
-  const styles: Array<{ id: RemixStyle; label: string; description: string; icon: React.ReactNode }> = [
-    {
-      id: 'dubstep',
-      label: 'Dubstep',
-      description: 'Heavy bass drops and wobble effects',
-      icon: <Zap className="w-6 h-6" />,
-    },
-    {
-      id: 'electrohouse',
-      label: 'Electro House',
-      description: 'Uplifting rhythms and synth stabs',
-      icon: <Music2 className="w-6 h-6" />,
-    },
-  ];
+const STYLES: Array<{
+  id: RemixStyle
+  name: string
+  description: string
+  icon: typeof Waves
+  accent: "primary" | "secondary"
+}> = [
+  {
+    id: "dubstep",
+    name: "Dubstep",
+    description: "Half-time wobble bass, gritty sub & heavy sidechain",
+    icon: Waves,
+    accent: "primary",
+  },
+  {
+    id: "electrohouse",
+    name: "ElectroHouse",
+    description: "Four-on-the-floor kick, off-beat hats & pumping mix",
+    icon: Zap,
+    accent: "secondary",
+  },
+]
 
+export default function RemixStyleSelector({ selectedStyle, onStyleChange, disabled }: RemixStyleSelectorProps) {
   return (
-    <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-400/30 rounded-xl p-6">
-      <h3 className="text-lg font-semibold mb-4">Choose Remix Style</h3>
-      <div className="grid grid-cols-1 gap-3">
-        {styles.map((style) => (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Remix style">
+      {STYLES.map((style) => {
+        const isSelected = selectedStyle === style.id
+        const Icon = style.icon
+        const isPrimary = style.accent === "primary"
+        return (
           <button
             key={style.id}
-            onClick={() => onStyleChange(style.id)}
+            type="button"
+            role="radio"
+            aria-checked={isSelected}
             disabled={disabled}
-            className={`p-4 rounded-lg border-2 transition-all text-left ${
-              selectedStyle === style.id
-                ? 'border-purple-400 bg-purple-500/20 shadow-lg shadow-purple-500/20'
-                : 'border-gray-600/50 hover:border-purple-400/50 bg-gray-900/50 hover:bg-gray-900/80'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            onClick={() => onStyleChange(style.id)}
+            className={`flex flex-col gap-3 rounded-xl border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+              isSelected
+                ? isPrimary
+                  ? "border-primary bg-primary/10 ring-1 ring-primary"
+                  : "border-secondary bg-secondary/10 ring-1 ring-secondary"
+                : "border-border bg-card hover:border-muted-foreground/40"
+            }`}
           >
-            <div className="flex items-start gap-3">
-              <div className="text-purple-400 mt-1">{style.icon}</div>
-              <div>
-                <p className="font-semibold text-white">{style.label}</p>
-                <p className="text-sm text-gray-400">{style.description}</p>
-              </div>
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                isPrimary
+                  ? isSelected
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-primary/15 text-primary"
+                  : isSelected
+                    ? "bg-secondary text-secondary-foreground"
+                    : "bg-secondary/15 text-secondary"
+              }`}
+            >
+              <Icon className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">{style.name}</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground text-pretty">{style.description}</p>
             </div>
           </button>
-        ))}
-      </div>
+        )
+      })}
     </div>
-  );
+  )
 }

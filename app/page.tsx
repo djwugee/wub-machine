@@ -1,301 +1,393 @@
-'use client';
+"use client"
 
-import { useState, useEffect, useRef } from 'react';
-import { Upload, Play, Download, Loader } from 'lucide-react';
-import AudioUploadZone from '@/components/AudioUploadZone';
-import RemixStyleSelector from '@/components/RemixStyleSelector';
-import ProgressTracker from '@/components/ProgressTracker';
-import AudioPlayer from '@/components/AudioPlayer';
-import { useWasm } from '@/lib/useWasm';
-import type { RemixStyle } from '@/types';
+import { useCallback, useRef, useState } from "react"
+import { Sparkles, Download, Save, AudioWaveform, AlertCircle } from "lucide-react"
+import AudioUploadZone from "@/components/AudioUploadZone"
+import RemixStyleSelector from "@/components/RemixStyleSelector"
+import ParameterControls from "@/components/ParameterControls"
+import ProgressTracker from "@/components/ProgressTracker"
+import AudioPlayer from "@/components/AudioPlayer"
+import WaveformVisualizer from "@/components/WaveformVisualizer"
+import LibraryList from "@/components/LibraryList"
+import { usePreferences } from "@/lib/usePreferences"
+import { useLibrary } from "@/lib/useLibrary"
+import { getDB } from "@/lib/db"
+import {
+  analyzeBuffer,
+  audioBufferToWav,
+  decodeAudioFile,
+  getAudioContext,
+  hashFile,
+  renderRemix,
+  type AnalysisResult,
+} from "@/lib/audio/engine"
+import type { RemixProject } from "@/lib/db"
+
+interface SourceState {
+  file: File
+  buffer: AudioBuffer
+  analysis: AnalysisResult
+}
+
+interface RemixState {
+  buffer: AudioBuffer
+  peaks: number[]
+  wav: Blob
+  saved: boolean
+}
 
 export default function Home() {
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [remixStyle, setRemixStyle] = useState<RemixStyle>('dubstep');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isRemixing, setIsRemixing] = useState(false);
-  const [remixProgress, setRemixProgress] = useState(0);
-  const [analysisResult, setAnalysisResult] = useState<any>(null);
-  const [remixedAudio, setRemixedAudio] = useState<Float32Array | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const wasmRef = useWasm();
+  const { prefs, setStyle, setVolume, updateParams } = usePreferences()
+  const { projects, loading, storage, saveRemix, deleteProject, refresh } = useLibrary()
 
-  // Handle audio file upload
-  const handleFileUpload = async (file: File) => {
-    try {
-      setError(null);
-      setAudioFile(file);
-      setIsAnalyzing(true);
-      setAnalysisResult(null);
-      setRemixedAudio(null);
+  const [source, setSource] = useState<SourceState | null>(null)
+  const [remix, setRemix] = useState<RemixState | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isRendering, setIsRendering] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [stageLabel, setStageLabel] = useState("")
+  const [error, setError] = useState<string | null>(null)
 
-      // Decode audio file
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
-      // Convert to mono
-      const monoAudio = audioBuffer.getChannelData(0);
-      const monoArray = Array.from(monoAudio);
+  const accent = prefs.style === "dubstep" ? "primary" : "secondary"
 
-      // Analyze with WASM
-      const wasm = await wasmRef.current;
-      if (wasm) {
-        wasm.load_audio(monoArray);
-        wasm.analyze();
+  const handleFileSelect = useCallback(
+    async (file: File) => {
+      setError(null)
+      setRemix(null)
+      setIsAnalyzing(true)
+      setSource(null)
+      try {
+        const buffer = await decodeAudioFile(file)
 
-        const analysis = JSON.parse(wasm.get_analysis_json());
-        setAnalysisResult({
-          tempo: wasm.get_tempo(),
-          beats: wasm.get_beats(),
-          duration: wasm.get_duration(),
-          details: analysis,
-        });
+        // Use cached analysis when available
+        const hash = await hashFile(file)
+        const db = await getDB()
+        const cached = await db.getAnalysisCache(hash)
 
-        console.log('[v0] Analysis complete:', {
-          tempo: wasm.get_tempo(),
-          beatCount: wasm.get_beats().length,
-          duration: wasm.get_duration(),
-        });
+        let analysis: AnalysisResult
+        if (cached) {
+          analysis = {
+            tempo: cached.tempo,
+            beats: cached.beats,
+            duration: cached.duration,
+            sampleRate: buffer.sampleRate,
+            peaks: [],
+          }
+          // peaks aren't cached (UI-only); recompute quickly via analyze if empty
+          analysis = { ...analyzeBuffer(buffer), tempo: cached.tempo, beats: cached.beats }
+        } else {
+          analysis = analyzeBuffer(buffer)
+          await db.cacheAnalysis(hash, {
+            tempo: analysis.tempo,
+            beats: analysis.beats,
+            bars: [],
+            chromagrams: [],
+            loudness: [],
+            sections: [],
+            duration: analysis.duration,
+          })
+        }
+
+        setSource({ file, buffer, analysis })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to decode audio file")
+      } finally {
+        setIsAnalyzing(false)
       }
+    },
+    [],
+  )
+
+  const runProgress = useCallback(() => {
+    setProgress(0)
+    const stages = [
+      { at: 10, label: "Preparing offline render" },
+      { at: 35, label: "Synthesizing beats & bass" },
+      { at: 65, label: "Applying effects chain" },
+      { at: 90, label: "Mixing & limiting" },
+    ]
+    let p = 0
+    if (progressTimer.current) clearInterval(progressTimer.current)
+    progressTimer.current = setInterval(() => {
+      p = Math.min(95, p + Math.random() * 12)
+      setProgress(p)
+      const stage = [...stages].reverse().find((s) => p >= s.at)
+      if (stage) setStageLabel(stage.label)
+    }, 120)
+  }, [])
+
+  const stopProgress = useCallback(() => {
+    if (progressTimer.current) clearInterval(progressTimer.current)
+    progressTimer.current = null
+    setProgress(100)
+  }, [])
+
+  const handleRender = useCallback(async () => {
+    if (!source) return
+    setError(null)
+    setIsRendering(true)
+    setRemix(null)
+    setStageLabel("Preparing offline render")
+    runProgress()
+    try {
+      // Ensure audio context is unlocked by this user gesture
+      const ctx = getAudioContext()
+      if (ctx.state === "suspended") await ctx.resume()
+
+      const rendered = await renderRemix(source.buffer, source.analysis, prefs.style, prefs.params)
+      const peaks = computePeaksFromBuffer(rendered, 1200)
+      const wav = audioBufferToWav(rendered)
+      stopProgress()
+      setRemix({ buffer: rendered, peaks, wav, saved: false })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to analyze audio';
-      setError(message);
-      console.error('[v0] Analysis error:', err);
+      setError(err instanceof Error ? err.message : "Remix rendering failed")
     } finally {
-      setIsAnalyzing(false);
+      setIsRendering(false)
+      setTimeout(() => setProgress(0), 600)
     }
-  };
+  }, [source, prefs.style, prefs.params, runProgress, stopProgress])
 
-  // Handle remix generation
-  const handleStartRemix = async () => {
-    if (!audioFile || !analysisResult || !wasmRef.current.current) {
-      setError('Please upload and analyze an audio file first');
-      return;
-    }
+  const handleDownload = useCallback(() => {
+    if (!remix || !source) return
+    const url = URL.createObjectURL(remix.wav)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${source.file.name.replace(/\.[^/.]+$/, "")}-${prefs.style}.wav`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [remix, source, prefs.style])
 
+  const handleSave = useCallback(async () => {
+    if (!remix || !source) return
     try {
-      setError(null);
-      setIsRemixing(true);
-      setRemixProgress(0);
-
-      const wasm = await wasmRef.current;
-
-      // Simulate remix with progress updates
-      for (let i = 0; i <= 100; i += 10) {
-        setRemixProgress(i);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      // Perform actual remix
-      let remixedData: Float32Array;
-
-      if (remixStyle === 'dubstep') {
-        remixedData = wasm.remix_dubstep();
-      } else {
-        remixedData = wasm.remix_electrohouse();
-      }
-
-      setRemixedAudio(remixedData);
-      setRemixProgress(100);
-
-      console.log('[v0] Remix complete:', {
-        style: remixStyle,
-        outputLength: remixedData.length,
-      });
+      await saveRemix({
+        originalFileName: source.file.name,
+        originalFileSize: source.file.size,
+        style: prefs.style,
+        wavBlob: remix.wav,
+        tempo: source.analysis.tempo,
+        beats: source.analysis.beats,
+        duration: remix.buffer.duration,
+      })
+      setRemix((r) => (r ? { ...r, saved: true } : r))
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Remix failed';
-      setError(message);
-      console.error('[v0] Remix error:', err);
-    } finally {
-      setIsRemixing(false);
+      setError(err instanceof Error ? err.message : "Failed to save remix")
     }
-  };
+  }, [remix, source, prefs.style, saveRemix])
 
-  // Handle download
-  const handleDownload = async () => {
-    if (!remixedAudio || !audioFile) return;
-
-    try {
-      // Create WAV file
-      const sampleRate = 44100;
-      const wav = encodeWav(remixedAudio, sampleRate);
-      const blob = new Blob([wav], { type: 'audio/wav' });
-      const url = URL.createObjectURL(blob);
-
-      // Download
-      const a = document.createElement('a');
-      a.href = url;
-      const baseName = audioFile.name.replace(/\.[^/.]+$/, '');
-      a.download = `${baseName}-${remixStyle}.wav`;
-      a.click();
-
-      URL.revokeObjectURL(url);
-      console.log('[v0] Download initiated:', a.download);
-    } catch (err) {
-      console.error('[v0] Download error:', err);
-      setError('Failed to download remix');
-    }
-  };
+  const handlePlaySaved = useCallback(
+    async (project: RemixProject) => {
+      const entry = project.remixes[0]
+      if (!entry) return
+      try {
+        const ctx = getAudioContext()
+        const buffer = await ctx.decodeAudioData(entry.audioData.slice(0))
+        const peaks = computePeaksFromBuffer(buffer, 1200)
+        const wav = new Blob([entry.audioData], { type: "audio/wav" })
+        setSource(null)
+        setRemix({ buffer, peaks, wav, saved: true })
+        setStyle(entry.style)
+      } catch {
+        setError("Could not load saved remix")
+      }
+    },
+    [setStyle],
+  )
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-black text-white">
-      {/* Header */}
-      <header className="border-b border-purple-500/20 bg-black/40 backdrop-blur-lg">
-        <div className="max-w-6xl mx-auto px-4 py-8 md:py-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-2">
-            Wub Machine
-          </h1>
-          <p className="text-purple-300/80 text-lg">
-            Transform your music into stunning remixes—entirely in your browser
-          </p>
+    <main className="min-h-screen bg-background">
+      <header className="border-b border-border">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-6">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <AudioWaveform className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-foreground">Wub Machine</h1>
+            <p className="text-sm text-muted-foreground">Browser-native Dubstep & ElectroHouse remixer</p>
+          </div>
+          <span className="ml-auto hidden rounded-full border border-border px-3 py-1 text-xs text-muted-foreground sm:inline">
+            100% client-side · no uploads
+          </span>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-4 py-12">
-        <div className="grid md:grid-cols-2 gap-8">
-          {/* Upload Section */}
+      <div className="mx-auto max-w-5xl px-4 py-8">
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          {/* Left column: source + controls */}
           <div className="space-y-6">
-            <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-xl p-8">
-              <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-                <Upload className="w-6 h-6" />
-                Upload Your Track
-              </h2>
-              <AudioUploadZone onFileSelect={handleFileUpload} isLoading={isAnalyzing} />
-            </div>
-
-            {/* Analysis Results */}
-            {analysisResult && (
-              <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-blue-400/30 rounded-xl p-6">
-                <h3 className="text-lg font-semibold mb-4">Analysis Results</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Tempo:</span>
-                    <span className="text-white font-semibold">
-                      {analysisResult.tempo.toFixed(1)} BPM
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Duration:</span>
-                    <span className="text-white font-semibold">
-                      {analysisResult.duration.toFixed(1)}s
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Beats Detected:</span>
-                    <span className="text-white font-semibold">
-                      {analysisResult.beats.length}
-                    </span>
-                  </div>
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-4 font-semibold text-foreground">1 · Load a track</h2>
+              <AudioUploadZone
+                onFileSelect={handleFileSelect}
+                isLoading={isAnalyzing}
+                fileName={source?.file.name ?? null}
+                fileSize={source?.file.size ?? null}
+              />
+              {source && (
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  <Stat label="Tempo" value={`${Math.round(source.analysis.tempo)} BPM`} />
+                  <Stat label="Beats" value={`${source.analysis.beats.length}`} />
+                  <Stat label="Duration" value={formatTime(source.analysis.duration)} />
                 </div>
-              </div>
-            )}
+              )}
+              {source && (
+                <div className="mt-4">
+                  <WaveformVisualizer peaks={source.analysis.peaks} accent={accent} height={64} />
+                </div>
+              )}
+            </section>
 
-            {/* Error Display */}
-            {error && (
-              <div className="bg-red-500/10 border border-red-400/30 rounded-xl p-4">
-                <p className="text-red-300 text-sm">{error}</p>
-              </div>
-            )}
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-4 font-semibold text-foreground">2 · Pick a style</h2>
+              <RemixStyleSelector
+                selectedStyle={prefs.style}
+                onStyleChange={setStyle}
+                disabled={isRendering}
+              />
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-4 font-semibold text-foreground">3 · Shape the sound</h2>
+              <ParameterControls
+                style={prefs.style}
+                params={prefs.params}
+                onChange={updateParams}
+                disabled={isRendering}
+              />
+            </section>
           </div>
 
-          {/* Remix Section */}
+          {/* Right column: render + output + library */}
           <div className="space-y-6">
-            {/* Style Selector */}
-            <RemixStyleSelector
-              selectedStyle={remixStyle}
-              onStyleChange={setRemixStyle}
-              disabled={!analysisResult || isRemixing}
-            />
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-4 font-semibold text-foreground">4 · Render & preview</h2>
 
-            {/* Remix Button */}
-            <button
-              onClick={handleStartRemix}
-              disabled={!analysisResult || isRemixing || isAnalyzing}
-              className="w-full py-4 px-6 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-bold rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
-            >
-              {isRemixing ? (
-                <>
-                  <Loader className="w-5 h-5 animate-spin" />
-                  Remixing...
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5" />
-                  Generate Remix
-                </>
+              <button
+                type="button"
+                onClick={handleRender}
+                disabled={!source || isRendering || isAnalyzing}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles className="h-5 w-5" />
+                {isRendering ? "Rendering…" : "Generate Remix"}
+              </button>
+
+              {isRendering && (
+                <div className="mt-4">
+                  <ProgressTracker progress={progress} stageLabel={stageLabel} style={prefs.style} />
+                </div>
               )}
-            </button>
 
-            {/* Progress Tracker */}
-            {isRemixing && (
-              <ProgressTracker progress={remixProgress} style={remixStyle} />
-            )}
+              {error && (
+                <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <p className="text-sm text-destructive">{error}</p>
+                </div>
+              )}
 
-            {/* Audio Player */}
-            {remixedAudio && (
-              <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-400/30 rounded-xl p-6">
-                <h3 className="text-lg font-semibold mb-4">Remixed Audio</h3>
-                <AudioPlayer audioData={remixedAudio} sampleRate={44100} />
-                <button
-                  onClick={handleDownload}
-                  className="w-full mt-4 py-3 px-4 bg-green-600 hover:bg-green-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <Download className="w-5 h-5" />
-                  Download Remix
-                </button>
-              </div>
-            )}
+              {remix && (
+                <div className="mt-5 space-y-4">
+                  <AudioPlayer
+                    buffer={remix.buffer}
+                    peaks={remix.peaks}
+                    accent={accent}
+                    volume={prefs.volume}
+                    onVolumeChange={setVolume}
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDownload}
+                      className="flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 font-medium text-foreground transition-colors hover:bg-muted"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download WAV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={remix.saved}
+                      className="flex items-center justify-center gap-2 rounded-lg bg-secondary px-4 py-2.5 font-medium text-secondary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      <Save className="h-4 w-4" />
+                      {remix.saved ? "Saved" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!remix && !isRendering && (
+                <p className="mt-4 text-sm text-muted-foreground text-pretty">
+                  {source
+                    ? "Adjust the parameters and generate your remix. Everything renders locally."
+                    : "Load a track to get started."}
+                </p>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <LibraryList
+                projects={projects}
+                loading={loading}
+                storage={storage}
+                onPlay={handlePlaySaved}
+                onDelete={async (id) => {
+                  await deleteProject(id)
+                  await refresh()
+                }}
+              />
+            </section>
           </div>
         </div>
       </div>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto max-w-5xl px-4 py-6 text-center text-xs text-muted-foreground">
+          Audio is decoded, analyzed, remixed and stored entirely in your browser. No files ever leave your device.
+        </div>
+      </footer>
     </main>
-  );
+  )
 }
 
-/// Helper function to encode WAV file
-function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
-  const numChannels = 1;
-  const bitsPerSample = 16;
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3 text-center">
+      <p className="font-mono text-lg font-semibold text-foreground tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+    </div>
+  )
+}
 
-  const bytesPerSample = bitsPerSample / 8;
-  const blockAlign = numChannels * bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = samples.length * bytesPerSample;
+function computePeaksFromBuffer(buffer: AudioBuffer, buckets: number): number[] {
+  const channels = buffer.numberOfChannels
+  const length = buffer.length
+  const out = new Array<number>(buckets).fill(0)
+  const bucketSize = Math.floor(length / buckets) || 1
+  let max = 0
+  const data: Float32Array[] = []
+  for (let c = 0; c < channels; c++) data.push(buffer.getChannelData(c))
 
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  // WAV header
-  const setUint32 = (offset: number, value: number) => {
-    view.setUint32(offset, value, true);
-  };
-  const setUint16 = (offset: number, value: number) => {
-    view.setUint16(offset, value, true);
-  };
-
-  setUint32(0, 0x46464952); // "RIFF"
-  setUint32(4, 36 + dataSize);
-  setUint32(8, 0x45564157); // "WAVE"
-  setUint32(12, 0x20746d66); // "fmt "
-  setUint32(16, 16); // Subchunk1Size
-  setUint16(20, 1); // AudioFormat (PCM)
-  setUint16(22, numChannels);
-  setUint32(24, sampleRate);
-  setUint32(28, byteRate);
-  setUint16(32, blockAlign);
-  setUint16(34, bitsPerSample);
-  setUint32(36, 0x61746164); // "data"
-  setUint32(40, dataSize);
-
-  // Write PCM data
-  let index = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(index, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    index += 2;
+  for (let b = 0; b < buckets; b++) {
+    let peak = 0
+    const start = b * bucketSize
+    for (let i = 0; i < bucketSize; i++) {
+      let sample = 0
+      for (let c = 0; c < channels; c++) sample += Math.abs(data[c][start + i] || 0)
+      sample /= channels
+      if (sample > peak) peak = sample
+    }
+    out[b] = peak
+    if (peak > max) max = peak
   }
+  if (max > 0) for (let b = 0; b < buckets; b++) out[b] /= max
+  return out
+}
 
-  return buffer;
+function formatTime(seconds: number) {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, "0")}`
 }

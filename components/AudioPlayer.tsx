@@ -1,172 +1,173 @@
-'use client';
+"use client"
 
-import { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, Volume1, VolumeX } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Play, Pause, Volume2, Volume1, VolumeX } from "lucide-react"
+import { getAudioContext } from "@/lib/audio/engine"
+import WaveformVisualizer from "./WaveformVisualizer"
 
 interface AudioPlayerProps {
-  audioData: Float32Array;
-  sampleRate: number;
+  buffer: AudioBuffer
+  peaks: number[]
+  accent?: "primary" | "secondary"
+  volume: number
+  onVolumeChange: (v: number) => void
 }
 
-export default function AudioPlayer({ audioData, sampleRate }: AudioPlayerProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(80);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
+export default function AudioPlayer({ buffer, peaks, accent = "primary", volume, onVolumeChange }: AudioPlayerProps) {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
 
-  // Initialize audio context and buffer
-  useEffect(() => {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    audioContextRef.current = ctx;
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const gainRef = useRef<GainNode | null>(null)
+  const startTimeRef = useRef(0)
+  const startOffsetRef = useRef(0)
+  const rafRef = useRef<number | null>(null)
 
-    const buffer = ctx.createBuffer(1, audioData.length, sampleRate);
-    const channelData = buffer.getChannelData(0);
-    channelData.set(audioData);
-    audioBufferRef.current = buffer;
+  const duration = buffer.duration
 
-    setDuration(buffer.duration);
-
-    return () => {
-      if (isPlaying) {
-        ctx.suspend();
+  const stopInternal = useCallback(() => {
+    if (sourceRef.current) {
+      sourceRef.current.onended = null
+      try {
+        sourceRef.current.stop()
+      } catch {
+        /* already stopped */
       }
-    };
-  }, [audioData, sampleRate]);
+      sourceRef.current.disconnect()
+      sourceRef.current = null
+    }
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }, [])
 
-  const handlePlayPause = () => {
-    if (!audioContextRef.current || !audioBufferRef.current) return;
+  // Stop playback when the buffer changes (new remix rendered)
+  useEffect(() => {
+    stopInternal()
+    setIsPlaying(false)
+    setCurrentTime(0)
+    startOffsetRef.current = 0
+  }, [buffer, stopInternal])
 
-    if (isPlaying) {
-      // Stop playback
-      sourceRef.current?.stop();
-      sourceRef.current = null;
-      setIsPlaying(false);
-    } else {
-      // Start playback
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBufferRef.current;
+  useEffect(() => {
+    return () => stopInternal()
+  }, [stopInternal])
 
-      const gainNode = audioContextRef.current.createGain();
-      gainNode.gain.value = volume / 100;
+  // Keep gain in sync with volume
+  useEffect(() => {
+    if (gainRef.current) gainRef.current.gain.value = volume
+  }, [volume])
 
-      source.connect(gainNode);
-      gainNode.connect(audioContextRef.current.destination);
+  const tick = useCallback(() => {
+    const ctx = getAudioContext()
+    const elapsed = ctx.currentTime - startTimeRef.current + startOffsetRef.current
+    if (elapsed >= duration) {
+      stopInternal()
+      setIsPlaying(false)
+      setCurrentTime(0)
+      startOffsetRef.current = 0
+      return
+    }
+    setCurrentTime(elapsed)
+    rafRef.current = requestAnimationFrame(tick)
+  }, [duration, stopInternal])
 
-      source.start(0, currentTime);
-      sourceRef.current = source;
-      gainNodeRef.current = gainNode;
+  const playFrom = useCallback(
+    (offset: number) => {
+      const ctx = getAudioContext()
+      if (ctx.state === "suspended") void ctx.resume()
+      stopInternal()
 
-      setIsPlaying(true);
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      const gain = ctx.createGain()
+      gain.gain.value = volume
+      source.connect(gain)
+      gain.connect(ctx.destination)
 
-      // Track playback position
-      const updateTimer = setInterval(() => {
-        if (audioContextRef.current) {
-          const elapsed = audioContextRef.current.currentTime;
-          const newTime = (elapsed * sampleRate) / audioData.length;
-
-          if (newTime >= duration) {
-            setIsPlaying(false);
-            setCurrentTime(0);
-            sourceRef.current?.stop();
-            sourceRef.current = null;
-            clearInterval(updateTimer);
-          } else {
-            setCurrentTime(Math.min(newTime, duration));
-          }
+      source.onended = () => {
+        if (sourceRef.current === source) {
+          setIsPlaying(false)
         }
-      }, 100);
-    }
-  };
+      }
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVolume = parseInt(e.target.value, 10);
-    setVolume(newVolume);
+      source.start(0, offset)
+      sourceRef.current = source
+      gainRef.current = gain
+      startTimeRef.current = ctx.currentTime
+      startOffsetRef.current = offset
+      setIsPlaying(true)
+      rafRef.current = requestAnimationFrame(tick)
+    },
+    [buffer, volume, stopInternal, tick],
+  )
 
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = newVolume / 100;
-    }
-  };
-
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    const newTime = percent * duration;
-
-    setCurrentTime(newTime);
-
+  const handlePlayPause = useCallback(() => {
     if (isPlaying) {
-      sourceRef.current?.stop();
-      handlePlayPause(); // Restart from new position
-      setTimeout(handlePlayPause, 50);
+      const ctx = getAudioContext()
+      const elapsed = ctx.currentTime - startTimeRef.current + startOffsetRef.current
+      startOffsetRef.current = Math.min(elapsed, duration)
+      stopInternal()
+      setIsPlaying(false)
+    } else {
+      playFrom(startOffsetRef.current >= duration ? 0 : startOffsetRef.current)
     }
-  };
+  }, [isPlaying, duration, playFrom, stopInternal])
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const handleSeek = useCallback(
+    (fraction: number) => {
+      const offset = fraction * duration
+      setCurrentTime(offset)
+      if (isPlaying) playFrom(offset)
+      else startOffsetRef.current = offset
+    },
+    [duration, isPlaying, playFrom],
+  )
 
-  const getVolumeIcon = () => {
-    if (volume === 0) return <VolumeX className="w-4 h-4" />;
-    if (volume < 50) return <Volume1 className="w-4 h-4" />;
-    return <Volume2 className="w-4 h-4" />;
-  };
+  const VolumeIcon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2
 
   return (
-    <div className="space-y-3">
-      {/* Play Controls */}
-      <button
-        onClick={handlePlayPause}
-        className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-2"
-      >
-        {isPlaying ? (
-          <>
-            <Pause className="w-5 h-5" />
-            Pause
-          </>
-        ) : (
-          <>
-            <Play className="w-5 h-5" />
-            Play
-          </>
-        )}
-      </button>
+    <div className="space-y-4">
+      <WaveformVisualizer
+        peaks={peaks}
+        progress={duration > 0 ? currentTime / duration : 0}
+        accent={accent}
+        onSeek={handleSeek}
+      />
 
-      {/* Timeline */}
-      <div className="space-y-1">
-        <div
-          onClick={handleTimelineClick}
-          className="w-full bg-gray-800 rounded-full h-2 cursor-pointer hover:bg-gray-700 transition-colors"
+      <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={handlePlayPause}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-transform hover:scale-105"
+          aria-label={isPlaying ? "Pause" : "Play"}
         >
-          <div
-            className="bg-gradient-to-r from-purple-500 to-pink-500 h-full rounded-full transition-all"
-            style={{ width: `${(currentTime / duration) * 100}%` }}
+          {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="ml-0.5 h-5 w-5" />}
+        </button>
+
+        <span className="font-mono text-sm text-muted-foreground tabular-nums">
+          {formatTime(currentTime)} / {formatTime(duration)}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          <VolumeIcon className="h-4 w-4 text-muted-foreground" />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => onVolumeChange(Number.parseFloat(e.target.value))}
+            className="w-24"
+            aria-label="Volume"
           />
         </div>
-        <div className="flex justify-between text-xs text-gray-400">
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
-      </div>
-
-      {/* Volume Control */}
-      <div className="flex items-center gap-2">
-        <div className="text-gray-400">{getVolumeIcon()}</div>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={volume}
-          onChange={handleVolumeChange}
-          className="flex-1 h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-        />
-        <span className="text-xs text-gray-400 w-8">{volume}%</span>
       </div>
     </div>
-  );
+  )
+}
+
+function formatTime(seconds: number) {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, "0")}`
 }

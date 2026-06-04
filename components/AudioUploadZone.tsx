@@ -1,118 +1,106 @@
-'use client';
+"use client"
 
-import { useCallback, useState } from 'react';
-import { Upload, Music } from 'lucide-react';
+import { useCallback, useState } from "react"
+import { Upload, Music, Loader2 } from "lucide-react"
 
 interface AudioUploadZoneProps {
-  onFileSelect: (file: File) => void;
-  isLoading?: boolean;
+  onFileSelect: (file: File) => void
+  isLoading?: boolean
+  fileName?: string | null
+  fileSize?: number | null
 }
 
-export default function AudioUploadZone({ onFileSelect, isLoading }: AudioUploadZoneProps) {
-  const [isDragActive, setIsDragActive] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+export default function AudioUploadZone({ onFileSelect, isLoading, fileName, fileSize }: AudioUploadZoneProps) {
+  const [isDragActive, setIsDragActive] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleFile = useCallback(
+    (file: File) => {
+      if (!isValidAudioFile(file)) {
+        setError("Unsupported file. Use MP3, WAV, M4A, OGG, FLAC or WebM.")
+        return
+      }
+      setError(null)
+      onFileSelect(file)
+    },
+    [onFileSelect],
+  )
 
   const handleDrag = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setIsDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setIsDragActive(false);
-    }
-  }, []);
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === "dragenter" || e.type === "dragover") setIsDragActive(true)
+    else if (e.type === "dragleave") setIsDragActive(false)
+  }, [])
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragActive(false);
-
-      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-        const file = e.dataTransfer.files[0];
-        if (isValidAudioFile(file)) {
-          setSelectedFile(file);
-          onFileSelect(file);
-        }
-      }
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragActive(false)
+      const file = e.dataTransfer.files?.[0]
+      if (file) handleFile(file)
     },
-    [onFileSelect]
-  );
-
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files[0]) {
-        const file = e.target.files[0];
-        if (isValidAudioFile(file)) {
-          setSelectedFile(file);
-          onFileSelect(file);
-        }
-      }
-    },
-    [onFileSelect]
-  );
+    [handleFile],
+  )
 
   return (
-    <div
-      onDragEnter={handleDrag}
-      onDragLeave={handleDrag}
-      onDragOver={handleDrag}
-      onDrop={handleDrop}
-      className={`border-2 border-dashed rounded-lg p-8 text-center transition-all cursor-pointer ${
-        isDragActive
-          ? 'border-purple-400 bg-purple-500/10'
-          : 'border-purple-300/30 hover:border-purple-300/50'
-      } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-    >
-      <input
-        type="file"
-        accept="audio/*"
-        onChange={handleChange}
-        disabled={isLoading}
-        className="hidden"
-        id="audio-input"
-      />
-      <label htmlFor="audio-input" className="cursor-pointer block">
+    <div>
+      <div
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+        className={`relative rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+          isDragActive ? "border-primary bg-primary/10" : "border-border hover:border-primary/60"
+        } ${isLoading ? "opacity-70" : ""}`}
+      >
+        <input
+          type="file"
+          accept="audio/*"
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+          disabled={isLoading}
+          className="absolute inset-0 cursor-pointer opacity-0"
+          aria-label="Upload an audio file"
+          id="audio-input"
+        />
         <div className="flex flex-col items-center gap-3">
-          {selectedFile ? (
-            <>
-              <Music className="w-12 h-12 text-purple-400" />
-              <div>
-                <p className="text-purple-300 font-semibold">{selectedFile.name}</p>
-                <p className="text-purple-400/60 text-sm">
-                  {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                </p>
-              </div>
-            </>
+          <div
+            className={`flex h-14 w-14 items-center justify-center rounded-full ${
+              fileName ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+            }`}
+          >
+            {isLoading ? (
+              <Loader2 className="h-7 w-7 animate-spin" />
+            ) : fileName ? (
+              <Music className="h-7 w-7" />
+            ) : (
+              <Upload className="h-7 w-7" />
+            )}
+          </div>
+
+          {fileName ? (
+            <div>
+              <p className="font-medium text-foreground">{fileName}</p>
+              <p className="text-sm text-muted-foreground">
+                {fileSize ? `${(fileSize / 1024 / 1024).toFixed(2)} MB · ` : ""}
+                {isLoading ? "Analyzing…" : "Click or drop to replace"}
+              </p>
+            </div>
           ) : (
-            <>
-              <Upload className="w-12 h-12 text-purple-400" />
-              <div>
-                <p className="text-purple-300 font-semibold">
-                  Drag your audio file here or click to browse
-                </p>
-                <p className="text-purple-400/60 text-sm">
-                  Supports MP3, WAV, M4A, OGG, WebM
-                </p>
-              </div>
-            </>
+            <div>
+              <p className="font-medium text-foreground text-pretty">Drop a track here or click to browse</p>
+              <p className="text-sm text-muted-foreground">MP3, WAV, M4A, OGG, FLAC, WebM</p>
+            </div>
           )}
         </div>
-      </label>
+      </div>
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
-  );
+  )
 }
 
 function isValidAudioFile(file: File): boolean {
-  const validTypes = [
-    'audio/mpeg',
-    'audio/wav',
-    'audio/mp4',
-    'audio/ogg',
-    'audio/webm',
-    'audio/flac',
-  ];
-
-  return validTypes.some((type) => file.type.includes(type)) ||
-    /\.(mp3|wav|m4a|ogg|webm|flac)$/i.test(file.name);
+  const validTypes = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg", "audio/webm", "audio/flac"]
+  return validTypes.some((t) => file.type.includes(t)) || /\.(mp3|wav|m4a|ogg|webm|flac|aac)$/i.test(file.name)
 }
