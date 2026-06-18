@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
-import { Sparkles, Download, Save, AudioWaveform, AlertCircle } from "lucide-react"
+import { Sparkles, Download, Save, AudioWaveform, AlertCircle, Scissors } from "lucide-react"
 import AudioUploadZone from "@/components/AudioUploadZone"
 import RemixStyleSelector from "@/components/RemixStyleSelector"
 import ParameterControls from "@/components/ParameterControls"
@@ -16,10 +16,13 @@ import {
   analyzeBuffer,
   audioBufferToWav,
   decodeAudioFile,
+  extractDrumKit,
   getAudioContext,
   hashFile,
   renderRemix,
+  STYLE_META,
   type AnalysisResult,
+  type DrumKit,
 } from "@/lib/audio/engine"
 import type { RemixProject } from "@/lib/db"
 
@@ -27,6 +30,7 @@ interface SourceState {
   file: File
   buffer: AudioBuffer
   analysis: AnalysisResult
+  drumKit: DrumKit
 }
 
 interface RemixState {

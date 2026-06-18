@@ -10,6 +10,7 @@ export interface Preferences {
   params: RemixParams
   volume: number
   autoPreview: boolean
+  useSlicedDrums: boolean
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
@@ -17,6 +18,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   params: DEFAULT_PARAMS,
   volume: 0.9,
   autoPreview: true,
+  useSlicedDrums: false,
 }
 
 function load(): Preferences {
@@ -79,6 +81,10 @@ export function usePreferences() {
     setPrefs((p) => ({ ...p, autoPreview }))
   }, [])
 
+  const setUseSlicedDrums = useCallback((useSlicedDrums: boolean) => {
+    setPrefs((p) => ({ ...p, useSlicedDrums }))
+  }, [])
+
   const updateParams = useCallback(
     <S extends RemixStyle>(style: S, patch: Partial<RemixParams[S]>) => {
       setPrefs((p) => ({
@@ -92,5 +98,5 @@ export function usePreferences() {
     [],
   )
 
-  return { prefs, hydrated, setStyle, setVolume, setAutoPreview, updateParams }
+  return { prefs, hydrated, setStyle, setVolume, setAutoPreview, setUseSlicedDrums, updateParams }
 }

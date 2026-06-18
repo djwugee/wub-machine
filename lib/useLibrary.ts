@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { getDB, type RemixProject } from "@/lib/db"
-import type { RemixStyle } from "@/lib/audio/engine"
+import { STYLE_META, type RemixStyle } from "@/lib/audio/engine"
 
 export interface SaveRemixInput {
   originalFileName: string
@@ -89,5 +89,5 @@ function stripExt(name: string) {
 }
 
 function label(style: RemixStyle) {
-  return style === "dubstep" ? "Dubstep" : "ElectroHouse"
+  return STYLE_META[style]?.label ?? style
 }
